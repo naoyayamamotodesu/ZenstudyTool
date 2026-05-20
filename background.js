@@ -11,7 +11,8 @@ importScripts('shared/constants.js');
 
 const {
   GEMINI_MODEL_MODES,
-  GEMINI_MODEL_FALLBACK_ORDER: GEMINI_PROOFREAD_FALLBACK_MODELS,
+  GEMINI_MODEL_MANUAL_OPTIONS: GEMINI_PROOFREAD_MODELS,
+  GEMINI_MODEL_FALLBACK_ORDERS: GEMINI_PROOFREAD_FALLBACK_ORDERS,
   DEFAULT_GEMINI_MODEL: DEFAULT_GEMINI_PROOFREAD_MODEL,
   MESSAGE_TYPES,
   STORAGE_KEYS,
@@ -24,6 +25,28 @@ const DOWNLOAD_PROGRESS_THROTTLE_MS = 250;
 const GEMINI_REQUEST_TIMEOUT_MS = 30 * 1000;
 const GEMINI_MODELS_CACHE_TTL_MS = 10 * 60 * 1000;
 const GEMINI_API_BASE_URL = 'https://generativelanguage.googleapis.com/v1beta';
+const GEMINI_THINKING_PROFILES = Object.freeze({
+  fastest: 'fastest',
+  standard: 'standard',
+  highest: 'highest',
+});
+const GEMINI_25_THINKING_BUDGETS = Object.freeze({
+  'gemini-2.5-pro': {
+    fastest: 128,
+    standard: -1,
+    highest: 32768,
+  },
+  'gemini-2.5-flash': {
+    fastest: 0,
+    standard: -1,
+    highest: 24576,
+  },
+  'gemini-2.5-flash-lite': {
+    fastest: 0,
+    standard: -1,
+    highest: 24576,
+  },
+});
 const VIDEO_REQUEST_URL_PATTERNS = Object.freeze([
   '*://*.nnn.ed.nico/*',
   '*://*.nicovideo.jp/*',
@@ -47,6 +70,16 @@ const PROOFREAD_RESPONSE_JSON_SCHEMA = Object.freeze({
   propertyOrdering: ['correctedText'],
 });
 const GEMINI_PROOFREAD_MODEL_CONFIGS = Object.freeze({
+  'gemini-3.1-pro-preview': {
+    supportsSystemInstruction: true,
+    supportsStructuredOutput: true,
+    preserveDefaultTemperature: true,
+  },
+  'gemini-3.5-flash': {
+    supportsSystemInstruction: true,
+    supportsStructuredOutput: true,
+    preserveDefaultTemperature: true,
+  },
   'gemini-3-flash-preview': {
     supportsSystemInstruction: true,
     supportsStructuredOutput: true,
@@ -72,39 +105,19 @@ const GEMINI_PROOFREAD_MODEL_CONFIGS = Object.freeze({
     supportsStructuredOutput: true,
     preserveDefaultTemperature: false,
   },
-  'gemma-4-31b': {
+  'gemini-2.5-pro': {
     supportsSystemInstruction: true,
     supportsStructuredOutput: true,
     preserveDefaultTemperature: false,
   },
-  'gemma-4-26b-a4b': {
-    supportsSystemInstruction: true,
-    supportsStructuredOutput: true,
+  'gemma-4-31b-it': {
+    supportsSystemInstruction: false,
+    supportsStructuredOutput: false,
     preserveDefaultTemperature: false,
   },
-  'gemma-3-27b': {
+  'gemma-4-26b-a4b-it': {
     supportsSystemInstruction: false,
-    supportsStructuredOutput: true,
-    preserveDefaultTemperature: false,
-  },
-  'gemma-3-12b': {
-    supportsSystemInstruction: false,
-    supportsStructuredOutput: true,
-    preserveDefaultTemperature: false,
-  },
-  'gemma-3-4b': {
-    supportsSystemInstruction: false,
-    supportsStructuredOutput: true,
-    preserveDefaultTemperature: false,
-  },
-  'gemma-3-2b': {
-    supportsSystemInstruction: false,
-    supportsStructuredOutput: true,
-    preserveDefaultTemperature: false,
-  },
-  'gemma-3-1b': {
-    supportsSystemInstruction: false,
-    supportsStructuredOutput: true,
+    supportsStructuredOutput: false,
     preserveDefaultTemperature: false,
   },
 });
@@ -318,25 +331,18 @@ function createProofreadError(message, code, extras = {}) {
 }
 
 function normalizeProofreadModelMode(value) {
-  return value === GEMINI_MODEL_MODES.manual ? GEMINI_MODEL_MODES.manual : GEMINI_MODEL_MODES.auto;
+  return Object.values(GEMINI_MODEL_MODES).includes(value) ? value : GEMINI_MODEL_MODES.auto;
 }
 
 function normalizeProofreadModelName(value) {
-  return GEMINI_PROOFREAD_FALLBACK_MODELS.includes(value)
+  return GEMINI_PROOFREAD_MODELS.includes(value)
     ? value
     : DEFAULT_GEMINI_PROOFREAD_MODEL;
 }
 
 function getProofreadModelAliasCandidates(modelName) {
   const normalizedModelName = normalizeProofreadModelName(modelName);
-  const candidates = [];
-
-  if (normalizedModelName.startsWith('gemma-')) {
-    candidates.push(`${normalizedModelName}-it`);
-  }
-
-  candidates.push(normalizedModelName);
-  return [...new Set(candidates)];
+  return normalizedModelName ? [normalizedModelName] : [];
 }
 
 function getProofreadModelLookupKey(value) {
@@ -436,7 +442,8 @@ async function resolveProofreadRequestModelName(apiKey, modelName) {
 }
 
 function getProofreadModelConfig(modelName) {
-  return GEMINI_PROOFREAD_MODEL_CONFIGS[modelName] || {
+  const modelKey = getProofreadModelConfigKey(modelName);
+  return GEMINI_PROOFREAD_MODEL_CONFIGS[modelKey] || {
     supportsSystemInstruction: false,
     supportsStructuredOutput: false,
     preserveDefaultTemperature: false,
@@ -448,11 +455,71 @@ function getProofreadModelCandidates(mode, selectedModel) {
     return [normalizeProofreadModelName(selectedModel)];
   }
 
-  return [...GEMINI_PROOFREAD_FALLBACK_MODELS];
+  const fallbackOrder = GEMINI_PROOFREAD_FALLBACK_ORDERS[mode] || GEMINI_PROOFREAD_FALLBACK_ORDERS[GEMINI_MODEL_MODES.auto];
+  return [...fallbackOrder];
+}
+
+function getProofreadThinkingProfile(mode) {
+  if (mode === GEMINI_MODEL_MODES.autoSpeed) {
+    return GEMINI_THINKING_PROFILES.fastest;
+  }
+  if (mode === GEMINI_MODEL_MODES.autoQuality) {
+    return GEMINI_THINKING_PROFILES.highest;
+  }
+
+  return GEMINI_THINKING_PROFILES.standard;
 }
 
 function getProofreadModelConfigKey(modelName) {
-  return typeof modelName === 'string' ? modelName.trim().replace(/-it$/i, '') : '';
+  const normalizedModelName = typeof modelName === 'string' ? modelName.trim() : '';
+  if (GEMINI_PROOFREAD_MODEL_CONFIGS[normalizedModelName]) {
+    return normalizedModelName;
+  }
+
+  const withoutVersionSuffix = normalizedModelName.replace(/-\d{3,}$/i, '');
+  if (GEMINI_PROOFREAD_MODEL_CONFIGS[withoutVersionSuffix]) {
+    return withoutVersionSuffix;
+  }
+
+  return normalizedModelName;
+}
+
+function getGemini3ThinkingLevel(modelName, thinkingProfile) {
+  const isProModel = modelName.includes('-pro');
+  if (thinkingProfile === GEMINI_THINKING_PROFILES.highest) {
+    return 'high';
+  }
+  if (thinkingProfile === GEMINI_THINKING_PROFILES.fastest) {
+    return isProModel ? 'low' : 'minimal';
+  }
+  if (isProModel) {
+    return null;
+  }
+
+  return 'medium';
+}
+
+function getProofreadThinkingConfig(modelName, thinkingProfile) {
+  const modelKey = getProofreadModelConfigKey(modelName);
+  if (modelKey.startsWith('gemini-3')) {
+    const thinkingLevel = getGemini3ThinkingLevel(modelKey, thinkingProfile);
+    if (!thinkingLevel) {
+      return null;
+    }
+
+    return {
+      thinkingLevel,
+    };
+  }
+
+  const gemini25Budget = GEMINI_25_THINKING_BUDGETS[modelKey]?.[thinkingProfile];
+  if (Number.isFinite(gemini25Budget)) {
+    return {
+      thinkingBudget: gemini25Budget,
+    };
+  }
+
+  return null;
 }
 
 function buildProofreadPrompt(originalText, promptContext, strategy) {
@@ -701,12 +768,17 @@ function parsePlainTextProofreadText(responseText, originalText) {
   return trimmedText;
 }
 
-function buildProofreadRequestBody({ modelName, strategy, originalText, promptContext }) {
+function buildProofreadRequestBody({ modelName, strategy, originalText, promptContext, thinkingProfile }) {
   const modelConfig = getProofreadModelConfig(getProofreadModelConfigKey(modelName));
   const generationConfig = {
     candidateCount: 1,
     maxOutputTokens: 2048,
   };
+  const thinkingConfig = getProofreadThinkingConfig(modelName, thinkingProfile);
+
+  if (thinkingConfig) {
+    generationConfig.thinkingConfig = thinkingConfig;
+  }
 
   if (!modelConfig.preserveDefaultTemperature) {
     generationConfig.temperature = 0;
@@ -744,7 +816,7 @@ function buildProofreadRequestBody({ modelName, strategy, originalText, promptCo
   return requestBody;
 }
 
-async function requestProofreadFromModel({ apiKey, modelName, strategy, originalText, promptContext }) {
+async function requestProofreadFromModel({ apiKey, modelName, strategy, originalText, promptContext, thinkingProfile }) {
   const controller = new AbortController();
   const timeoutId = setTimeout(() => controller.abort(), GEMINI_REQUEST_TIMEOUT_MS);
 
@@ -761,6 +833,7 @@ async function requestProofreadFromModel({ apiKey, modelName, strategy, original
           strategy,
           originalText,
           promptContext,
+          thinkingProfile,
         })),
         signal: controller.signal,
       }
@@ -850,6 +923,7 @@ async function proofreadWithGemini({ originalText, promptContext }) {
   const mode = normalizeProofreadModelMode(geminiModelMode);
   const selectedModel = normalizeProofreadModelName(geminiSelectedModel);
   const modelCandidates = getProofreadModelCandidates(mode, selectedModel);
+  const thinkingProfile = getProofreadThinkingProfile(mode);
   const attempts = [];
 
   for (const modelName of modelCandidates) {
@@ -884,6 +958,7 @@ async function proofreadWithGemini({ originalText, promptContext }) {
           strategy,
           originalText: trimmedOriginalText,
           promptContext,
+          thinkingProfile,
         });
 
         return {

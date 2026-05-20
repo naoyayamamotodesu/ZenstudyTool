@@ -365,11 +365,13 @@
           <span class="slider"></span>
         </label>
       </div>
-      <p class="panel-copy">レポートや論述の入力内容を AI で校正します。自動選択では対応モデルを順番に試し、失敗時は次のモデルへフォールバックします。</p>
+      <p class="panel-copy">レポートや論述の入力内容を AI で校正します。自動選択ではモード別の対応モデルを順番に試し、失敗時は次のモデルへフォールバックします。</p>
       <div class="ai-field">
         <label for="geminiModelMode" class="ai-label">モデルモード</label>
         <select id="geminiModelMode" class="ai-select">
-          <option value="auto">自動選択</option>
+          <option value="auto">自動選択（バランス）</option>
+          <option value="autoSpeed">自動選択（速度優先）</option>
+          <option value="autoQuality">自動選択（精度優先）</option>
           <option value="manual">手動指定</option>
         </select>
       </div>

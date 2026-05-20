@@ -1,7 +1,7 @@
 const {
   STORAGE_KEYS,
   GEMINI_MODEL_MODES,
-  GEMINI_MODEL_FALLBACK_ORDER,
+  GEMINI_MODEL_MANUAL_OPTIONS,
   DEFAULT_GEMINI_MODEL,
 } = globalThis.ZenstudyToolConstants;
 
@@ -21,6 +21,12 @@ document.addEventListener('DOMContentLoaded', () => {
   const saveGeminiApiKey = document.getElementById('saveGeminiApiKey');
   const geminiApiKeyStatus = document.getElementById('geminiApiKeyStatus');
   let lastSavedApiKey = '';
+  const modelModeLabels = {
+    [GEMINI_MODEL_MODES.auto]: '自動選択（バランス）',
+    [GEMINI_MODEL_MODES.autoSpeed]: '自動選択（速度優先）',
+    [GEMINI_MODEL_MODES.autoQuality]: '自動選択（精度優先）',
+    [GEMINI_MODEL_MODES.manual]: '手動指定',
+  };
 
   const storageDefaults = {
     [STORAGE_KEYS.forceEssentialEnabled]: true,
@@ -58,18 +64,22 @@ document.addEventListener('DOMContentLoaded', () => {
   });
 
   const normalizeModelMode = (value) => {
-    return value === GEMINI_MODEL_MODES.manual ? GEMINI_MODEL_MODES.manual : GEMINI_MODEL_MODES.auto;
+    return Object.values(GEMINI_MODEL_MODES).includes(value) ? value : GEMINI_MODEL_MODES.auto;
   };
 
   const normalizeModelName = (value) => {
-    return GEMINI_MODEL_FALLBACK_ORDER.includes(value) ? value : DEFAULT_GEMINI_MODEL;
+    return GEMINI_MODEL_MANUAL_OPTIONS.includes(value) ? value : DEFAULT_GEMINI_MODEL;
   };
 
   const getModelDisplayName = (modelName) => {
-    if (modelName === 'gemini-2.5-flash') {
+    if (modelName === DEFAULT_GEMINI_MODEL) {
       return `${modelName}（推奨）`;
     }
     return modelName;
+  };
+
+  const getModelModeDisplayName = (mode) => {
+    return modelModeLabels[normalizeModelMode(mode)] || modelModeLabels[GEMINI_MODEL_MODES.auto];
   };
 
   const setApiKeyStatus = (message) => {
@@ -91,7 +101,7 @@ document.addEventListener('DOMContentLoaded', () => {
       [STORAGE_KEYS.geminiModelMode]: currentMode,
       [STORAGE_KEYS.geminiSelectedModel]: currentModel,
     } = getCurrentModelSettings();
-    return currentMode === GEMINI_MODEL_MODES.manual ? getModelDisplayName(currentModel) : '自動選択';
+    return currentMode === GEMINI_MODEL_MODES.manual ? getModelDisplayName(currentModel) : getModelModeDisplayName(currentMode);
   };
 
   const hasUnsavedApiKey = () => {
@@ -103,7 +113,7 @@ document.addEventListener('DOMContentLoaded', () => {
     if (!geminiSelectedModel) return;
 
     geminiSelectedModel.innerHTML = '';
-    for (const modelName of GEMINI_MODEL_FALLBACK_ORDER) {
+    for (const modelName of GEMINI_MODEL_MANUAL_OPTIONS) {
       const option = document.createElement('option');
       option.value = modelName;
       option.textContent = getModelDisplayName(modelName);
@@ -174,7 +184,7 @@ document.addEventListener('DOMContentLoaded', () => {
 
       const modeLabel = normalizeModelMode(result[STORAGE_KEYS.geminiModelMode]) === GEMINI_MODEL_MODES.manual
         ? getModelDisplayName(normalizeModelName(result[STORAGE_KEYS.geminiSelectedModel]))
-        : '自動選択';
+        : getModelModeDisplayName(result[STORAGE_KEYS.geminiModelMode]);
       setApiKeyStatus(result[STORAGE_KEYS.geminiApiKey] ? `APIキー保存済み (${modeLabel})` : `APIキー未設定 (${modeLabel})`);
     }
   );

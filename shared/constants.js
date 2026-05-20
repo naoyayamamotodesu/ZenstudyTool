@@ -16,23 +16,53 @@
 
   const GEMINI_MODEL_MODES = Object.freeze({
     auto: "auto",
+    autoSpeed: "autoSpeed",
+    autoQuality: "autoQuality",
     manual: "manual",
   });
 
-  const GEMINI_MODEL_FALLBACK_ORDER = Object.freeze([
-    "gemini-2.5-flash",
-    "gemini-2.5-flash-lite",
+  const GEMINI_MODEL_MANUAL_OPTIONS = Object.freeze([
+    "gemini-3.1-pro-preview",
+    "gemini-3.5-flash",
     "gemini-3-flash-preview",
     "gemini-3.1-flash-lite",
     "gemini-3.1-flash-lite-preview",
-    "gemma-4-31b",
-    "gemma-4-26b-a4b",
-    "gemma-3-27b",
-    "gemma-3-12b",
-    "gemma-3-4b",
-    "gemma-3-2b",
-    "gemma-3-1b",
+    "gemini-2.5-flash",
+    "gemini-2.5-flash-lite",
+    "gemini-2.5-pro",
+    "gemma-4-31b-it",
+    "gemma-4-26b-a4b-it",
   ]);
+
+  const GEMINI_MODEL_FALLBACK_ORDERS = Object.freeze({
+    [GEMINI_MODEL_MODES.auto]: Object.freeze([
+      "gemini-3.5-flash",
+      "gemini-3.1-flash-lite",
+      "gemini-2.5-flash",
+      "gemini-2.5-flash-lite",
+      "gemma-4-26b-a4b-it",
+      "gemma-4-31b-it",
+    ]),
+    [GEMINI_MODEL_MODES.autoSpeed]: Object.freeze([
+      "gemini-3.1-flash-lite",
+      "gemini-2.5-flash-lite",
+      "gemini-3.5-flash",
+      "gemini-2.5-flash",
+      "gemma-4-26b-a4b-it",
+      "gemma-4-31b-it",
+    ]),
+    [GEMINI_MODEL_MODES.autoQuality]: Object.freeze([
+      "gemini-3.5-flash",
+      "gemini-2.5-flash",
+      "gemma-4-31b-it",
+      "gemini-3.1-flash-lite",
+      "gemma-4-26b-a4b-it",
+      "gemini-2.5-flash-lite",
+    ]),
+  });
+
+  const DEFAULT_GEMINI_MODEL = "gemini-3.5-flash";
+  const GEMINI_MODEL_FALLBACK_ORDER = GEMINI_MODEL_FALLBACK_ORDERS[GEMINI_MODEL_MODES.auto];
 
   const MESSAGE_TYPES = Object.freeze({
     videoUrlDetected: "ZST_VIDEO_URL_DETECTED",
@@ -50,8 +80,10 @@
   globalThis.ZenstudyToolConstants = Object.freeze({
     STORAGE_KEYS,
     GEMINI_MODEL_MODES,
+    GEMINI_MODEL_MANUAL_OPTIONS,
+    GEMINI_MODEL_FALLBACK_ORDERS,
     GEMINI_MODEL_FALLBACK_ORDER,
-    DEFAULT_GEMINI_MODEL: GEMINI_MODEL_FALLBACK_ORDER[0],
+    DEFAULT_GEMINI_MODEL,
     MESSAGE_TYPES,
   });
 })();

@@ -68,7 +68,7 @@ DOM操作やデータ抽出、WebAssemblyを用いたメディア処理などの
 
 **AI文章校正の設定（ポップアップ内の専用パネル）:**
 - Gemini API キー: Google AI Studio で発行したキーを入力して保存します。
-- モデル選択: 使用する Gemini / Gemma モデルを選択します（自動選択を推奨）。
+- モデル選択: 自動選択（バランス / 速度優先 / 精度優先）または手動指定で、使用する Gemini / Gemma モデルを選択します（自動選択のバランスを推奨）。
 
 ## AI文章校正
 
@@ -76,9 +76,15 @@ DOM操作やデータ抽出、WebAssemblyを用いたメディア処理などの
 - 校正が適用されると、入力欄の下に変更箇所の差分（Diff）がハイライト表示され、ボタンが「元に戻す（Undo）」に切り替わります。
 - フッターの「まとめてAI校正」は、入力済みの自由記述欄を順番にまとめて校正します。
 - 各入力欄の「AI校正」は、その欄だけを個別に校正します。
-- モデルモードが自動選択のときは、次の順で利用可能なモデルを試します。
-  `gemini-2.5-flash` → `gemini-2.5-flash-lite` → `gemini-3-flash-preview` → `gemini-3.1-flash-lite` → `gemini-3.1-flash-lite-preview` → `gemma-4-31b` → `gemma-4-26b-a4b` → `gemma-3-27b` → `gemma-3-12b` → `gemma-3-4b` → `gemma-3-2b` → `gemma-3-1b`
-- Gemma 系は、利用可能なら `-it` 系の hosted model に自動解決して使用します。
+- 自動選択（バランス）では、次の順で利用可能なモデルを試します。
+  `gemini-3.5-flash` → `gemini-3.1-flash-lite` → `gemini-2.5-flash` → `gemini-2.5-flash-lite` → `gemma-4-26b-a4b-it` → `gemma-4-31b-it`
+- 自動選択（速度優先）では、次の順で利用可能なモデルを試します。
+  `gemini-3.1-flash-lite` → `gemini-2.5-flash-lite` → `gemini-3.5-flash` → `gemini-2.5-flash` → `gemma-4-26b-a4b-it` → `gemma-4-31b-it`
+- 自動選択（精度優先）では、次の順で利用可能なモデルを試します。
+  `gemini-3.5-flash` → `gemini-2.5-flash` → `gemma-4-31b-it` → `gemini-3.1-flash-lite` → `gemma-4-26b-a4b-it` → `gemini-2.5-flash-lite`
+- 手動指定では、`gemini-3.1-pro-preview` / `gemini-3.5-flash` / `gemini-3-flash-preview` / `gemini-3.1-flash-lite` / `gemini-3.1-flash-lite-preview` / `gemini-2.5-flash` / `gemini-2.5-flash-lite` / `gemini-2.5-pro` / `gemma-4-31b-it` / `gemma-4-26b-a4b-it` から選択できます。
+- 思考設定は、手動指定と自動選択（バランス）では標準、自動選択（速度優先）では最速、自動選択（精度優先）では最高に設定します。
+- Gemma 系は常に `-it` 系の hosted model を使用します。
 
 ## 動画ダウンロード仕様
 
