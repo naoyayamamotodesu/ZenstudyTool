@@ -23,8 +23,11 @@ const tabVideoUrls = new Map();
 const CONVERSION_TIMEOUT_MS = 5 * 60 * 1000;
 const DOWNLOAD_PROGRESS_THROTTLE_MS = 250;
 const GEMINI_REQUEST_TIMEOUT_MS = 30 * 1000;
+const GEMINI_MODEL_PROBE_TIMEOUT_MS = 12 * 1000;
 const GEMINI_MODELS_CACHE_TTL_MS = 10 * 60 * 1000;
 const GEMINI_API_BASE_URL = 'https://generativelanguage.googleapis.com/v1beta';
+const PROOFREAD_MIN_OUTPUT_TOKENS = 2048;
+const PROOFREAD_MAX_OUTPUT_TOKENS = 8192;
 const GEMINI_THINKING_PROFILES = Object.freeze({
   fastest: 'fastest',
   standard: 'standard',
@@ -330,6 +333,15 @@ function createProofreadError(message, code, extras = {}) {
   return error;
 }
 
+function getProofreadMaxOutputTokens(originalText) {
+  const textLength = String(originalText || '').length;
+  const estimatedTokens = Math.ceil(textLength * 1.5) + 512;
+  return Math.min(
+    PROOFREAD_MAX_OUTPUT_TOKENS,
+    Math.max(PROOFREAD_MIN_OUTPUT_TOKENS, estimatedTokens)
+  );
+}
+
 function normalizeProofreadModelMode(value) {
   return Object.values(GEMINI_MODEL_MODES).includes(value) ? value : GEMINI_MODEL_MODES.auto;
 }
@@ -402,6 +414,7 @@ async function listGenerateContentModels(apiKey) {
       const apiMessage = responseJson?.error?.message || `Gemini models.list error (${response.status})`;
       throw createProofreadError(apiMessage, `HTTP_${response.status}`, {
         status: response.status,
+        apiStatus: responseJson?.error?.status || '',
       });
     }
 
@@ -423,22 +436,31 @@ async function resolveProofreadRequestModelName(apiKey, modelName) {
 
   try {
     const availableModels = await listGenerateContentModels(apiKey);
-    for (const candidateName of aliasCandidates) {
-      const matchedModel = availableModels.find((apiModel) => doesApiModelMatchCandidate(apiModel, candidateName));
-      const requestModelName = getApiModelRequestName(matchedModel);
-      if (requestModelName) {
-        return requestModelName;
-      }
+    return findAvailableProofreadModel(availableModels, modelName);
+  } catch (error) {
+    if (isAuthOrPermissionError(error)) {
+      throw error;
     }
 
-    return null;
-  } catch (error) {
     console.warn('[ZenstudyTool BG] Failed to list Gemini API models. Falling back to alias candidate.', {
       modelName,
       error: error.message,
     });
     return aliasCandidates[0] || null;
   }
+}
+
+function findAvailableProofreadModel(availableModels, modelName) {
+  const aliasCandidates = getProofreadModelAliasCandidates(modelName);
+  for (const candidateName of aliasCandidates) {
+    const matchedModel = availableModels.find((apiModel) => doesApiModelMatchCandidate(apiModel, candidateName));
+    const requestModelName = getApiModelRequestName(matchedModel);
+    if (requestModelName) {
+      return requestModelName;
+    }
+  }
+
+  return null;
 }
 
 function getProofreadModelConfig(modelName) {
@@ -487,16 +509,16 @@ function getProofreadModelConfigKey(modelName) {
 function getGemini3ThinkingLevel(modelName, thinkingProfile) {
   const isProModel = modelName.includes('-pro');
   if (thinkingProfile === GEMINI_THINKING_PROFILES.highest) {
-    return 'high';
+    return 'HIGH';
   }
   if (thinkingProfile === GEMINI_THINKING_PROFILES.fastest) {
-    return isProModel ? 'low' : 'minimal';
+    return isProModel ? 'LOW' : 'MINIMAL';
   }
   if (isProModel) {
     return null;
   }
 
-  return 'medium';
+  return 'MEDIUM';
 }
 
 function getProofreadThinkingConfig(modelName, thinkingProfile) {
@@ -768,13 +790,13 @@ function parsePlainTextProofreadText(responseText, originalText) {
   return trimmedText;
 }
 
-function buildProofreadRequestBody({ modelName, strategy, originalText, promptContext, thinkingProfile }) {
+function buildProofreadRequestBody({ modelName, strategy, originalText, promptContext, thinkingProfile, disableThinkingConfig = false }) {
   const modelConfig = getProofreadModelConfig(getProofreadModelConfigKey(modelName));
   const generationConfig = {
     candidateCount: 1,
-    maxOutputTokens: 2048,
+    maxOutputTokens: getProofreadMaxOutputTokens(originalText),
   };
-  const thinkingConfig = getProofreadThinkingConfig(modelName, thinkingProfile);
+  const thinkingConfig = disableThinkingConfig ? null : getProofreadThinkingConfig(modelName, thinkingProfile);
 
   if (thinkingConfig) {
     generationConfig.thinkingConfig = thinkingConfig;
@@ -816,11 +838,70 @@ function buildProofreadRequestBody({ modelName, strategy, originalText, promptCo
   return requestBody;
 }
 
-async function requestProofreadFromModel({ apiKey, modelName, strategy, originalText, promptContext, thinkingProfile }) {
+function buildProofreadModelProbeRequestBody({ modelName, thinkingProfile, disableThinkingConfig = false }) {
+  const generationConfig = {
+    candidateCount: 1,
+    maxOutputTokens: 16,
+    temperature: 0,
+  };
+  const thinkingConfig = disableThinkingConfig ? null : getProofreadThinkingConfig(modelName, thinkingProfile);
+
+  if (thinkingConfig) {
+    generationConfig.thinkingConfig = thinkingConfig;
+  }
+
+  return {
+    contents: [
+      {
+        role: 'user',
+        parts: [
+          {
+            text: '接続確認です。OK とだけ返してください。',
+          },
+        ],
+      },
+    ],
+    generationConfig,
+  };
+}
+
+function isInvalidApiKeyError(error) {
+  return /api[_\s-]*key|key not valid|invalid key|API_KEY_INVALID/i.test(error?.message || '');
+}
+
+function isAuthOrPermissionError(error) {
+  if (error?.status === 401 || error?.status === 403) return true;
+  if (['UNAUTHENTICATED', 'PERMISSION_DENIED'].includes(error?.apiStatus)) return true;
+  return isInvalidApiKeyError(error);
+}
+
+function isSafetyStopError(error) {
+  return ['SAFETY', 'BLOCKLIST', 'PROHIBITED_CONTENT', 'SPII', 'RECITATION'].includes(error?.code);
+}
+
+function isThinkingConfigError(error) {
+  if (error?.status !== 400) return false;
+  return /thinkingConfig|thinking config|thinkingLevel|thinkingBudget|thinking/i.test(error?.message || '');
+}
+
+function shouldRetryWithoutThinkingConfig(error, hadThinkingConfig) {
+  return hadThinkingConfig && isThinkingConfigError(error);
+}
+
+async function sendProofreadGenerateContentRequest({ apiKey, modelName, strategy, originalText, promptContext, thinkingProfile, disableThinkingConfig = false }) {
   const controller = new AbortController();
   const timeoutId = setTimeout(() => controller.abort(), GEMINI_REQUEST_TIMEOUT_MS);
 
   try {
+    const requestBody = buildProofreadRequestBody({
+      modelName,
+      strategy,
+      originalText,
+      promptContext,
+      thinkingProfile,
+      disableThinkingConfig,
+    });
+
     const response = await fetch(
       `${GEMINI_API_BASE_URL}/models/${encodeURIComponent(modelName)}:generateContent?key=${encodeURIComponent(apiKey)}`,
       {
@@ -828,13 +909,7 @@ async function requestProofreadFromModel({ apiKey, modelName, strategy, original
         headers: {
           'Content-Type': 'application/json',
         },
-        body: JSON.stringify(buildProofreadRequestBody({
-          modelName,
-          strategy,
-          originalText,
-          promptContext,
-          thinkingProfile,
-        })),
+        body: JSON.stringify(requestBody),
         signal: controller.signal,
       }
     );
@@ -844,8 +919,10 @@ async function requestProofreadFromModel({ apiKey, modelName, strategy, original
       const apiMessage = responseJson?.error?.message || `Gemini API error (${response.status})`;
       throw createProofreadError(apiMessage, `HTTP_${response.status}`, {
         status: response.status,
+        apiStatus: responseJson?.error?.status || '',
         modelName,
         strategy,
+        hadThinkingConfig: Boolean(requestBody.generationConfig?.thinkingConfig),
       });
     }
 
@@ -876,8 +953,153 @@ async function requestProofreadFromModel({ apiKey, modelName, strategy, original
   }
 }
 
+async function requestProofreadFromModel({ apiKey, modelName, strategy, originalText, promptContext, thinkingProfile }) {
+  let disableThinkingConfig = false;
+
+  for (let attempt = 0; attempt < 2; attempt++) {
+    try {
+      return await sendProofreadGenerateContentRequest({
+        apiKey,
+        modelName,
+        strategy,
+        originalText,
+        promptContext,
+        thinkingProfile,
+        disableThinkingConfig,
+      });
+    } catch (error) {
+      if (!shouldRetryWithoutThinkingConfig(error, error?.hadThinkingConfig)) {
+        throw error;
+      }
+
+      disableThinkingConfig = true;
+      console.warn('[ZenstudyTool BG] Retrying proofreading without thinkingConfig', {
+        modelName,
+        strategy,
+        reason: error.message,
+      });
+    }
+  }
+
+  return sendProofreadGenerateContentRequest({
+    apiKey,
+    modelName,
+    strategy,
+    originalText,
+    promptContext,
+    thinkingProfile,
+    disableThinkingConfig: true,
+  });
+}
+
+async function sendProofreadModelProbeRequest({ apiKey, modelName, thinkingProfile, disableThinkingConfig = false }) {
+  const controller = new AbortController();
+  const timeoutId = setTimeout(() => controller.abort(), GEMINI_MODEL_PROBE_TIMEOUT_MS);
+
+  try {
+    const requestBody = buildProofreadModelProbeRequestBody({
+      modelName,
+      thinkingProfile,
+      disableThinkingConfig,
+    });
+    const response = await fetch(
+      `${GEMINI_API_BASE_URL}/models/${encodeURIComponent(modelName)}:generateContent?key=${encodeURIComponent(apiKey)}`,
+      {
+        method: 'POST',
+        headers: {
+          'Content-Type': 'application/json',
+        },
+        body: JSON.stringify(requestBody),
+        signal: controller.signal,
+      }
+    );
+    const responseJson = await response.json().catch(() => ({}));
+    if (!response.ok) {
+      const apiMessage = responseJson?.error?.message || `Gemini API error (${response.status})`;
+      throw createProofreadError(apiMessage, `HTTP_${response.status}`, {
+        status: response.status,
+        apiStatus: responseJson?.error?.status || '',
+        modelName,
+        hadThinkingConfig: Boolean(requestBody.generationConfig?.thinkingConfig),
+      });
+    }
+
+    if (!responseJson?.candidates?.[0]) {
+      throw createProofreadError('Geminiの応答が空でした', 'EMPTY_RESPONSE', {
+        modelName,
+      });
+    }
+
+    return true;
+  } catch (error) {
+    if (error?.name === 'AbortError') {
+      throw createProofreadError('Gemini APIの接続確認がタイムアウトしました', 'TIMEOUT', {
+        modelName,
+      });
+    }
+
+    if (!error?.code) {
+      throw createProofreadError(error?.message || 'モデル接続テストに失敗しました', 'REQUEST_FAILED', {
+        modelName,
+      });
+    }
+
+    throw error;
+  } finally {
+    clearTimeout(timeoutId);
+  }
+}
+
+async function probeProofreadModel({ apiKey, modelName, resolvedModel, thinkingProfile }) {
+  let disableThinkingConfig = false;
+
+  for (let attempt = 0; attempt < 2; attempt++) {
+    try {
+      await sendProofreadModelProbeRequest({
+        apiKey,
+        modelName: resolvedModel,
+        thinkingProfile,
+        disableThinkingConfig,
+      });
+      return {
+        modelName,
+        resolvedModel,
+        available: true,
+        tested: true,
+        message: '',
+      };
+    } catch (error) {
+      if (shouldRetryWithoutThinkingConfig(error, error?.hadThinkingConfig)) {
+        disableThinkingConfig = true;
+        continue;
+      }
+
+      return {
+        modelName,
+        resolvedModel,
+        available: false,
+        tested: true,
+        message: error.message || '利用できません',
+        code: error.code || '',
+        status: error.status || 0,
+      };
+    }
+  }
+
+  return {
+    modelName,
+    resolvedModel,
+    available: false,
+    tested: true,
+    message: 'thinkingConfig なしの接続確認にも失敗しました',
+    code: 'PROBE_FAILED',
+    status: 0,
+  };
+}
+
 function shouldRetryPlainTextStrategy(error, strategy) {
   if (strategy !== 'json_schema') return false;
+  if (isAuthOrPermissionError(error) || isSafetyStopError(error)) return false;
 
   if (error?.status === 400) return true;
 
@@ -885,7 +1107,10 @@ function shouldRetryPlainTextStrategy(error, strategy) {
 }
 
 function shouldTryNextProofreadModel(error) {
-  return !['EMPTY_TEXT', 'MISSING_API_KEY'].includes(error?.code);
+  if (['EMPTY_TEXT', 'MISSING_API_KEY', 'MODEL_NOT_AVAILABLE'].includes(error?.code)) return false;
+  if (isAuthOrPermissionError(error) || isSafetyStopError(error)) return false;
+  if (error?.status === 400) return false;
+  return true;
 }
 
 function buildProofreadFailureMessage(mode, attempts) {
@@ -1003,6 +1228,77 @@ async function proofreadWithGemini({ originalText, promptContext }) {
     'ALL_MODELS_FAILED',
     { attempts }
   );
+}
+
+async function testProofreadModelsAvailability() {
+  const {
+    [STORAGE_KEYS.geminiApiKey]: geminiApiKey = '',
+    [STORAGE_KEYS.geminiModelMode]: geminiModelMode = GEMINI_MODEL_MODES.auto,
+    [STORAGE_KEYS.geminiSelectedModel]: geminiSelectedModel = DEFAULT_GEMINI_PROOFREAD_MODEL,
+  } = await getLocalStorage({
+    [STORAGE_KEYS.geminiApiKey]: '',
+    [STORAGE_KEYS.geminiModelMode]: GEMINI_MODEL_MODES.auto,
+    [STORAGE_KEYS.geminiSelectedModel]: DEFAULT_GEMINI_PROOFREAD_MODEL,
+  });
+  const apiKey = geminiApiKey.trim();
+  if (!apiKey) {
+    throw createProofreadError('Gemini APIキーが未設定です。ポップアップから設定してください。', 'MISSING_API_KEY');
+  }
+
+  const mode = normalizeProofreadModelMode(geminiModelMode);
+  const selectedModel = normalizeProofreadModelName(geminiSelectedModel);
+  const modelCandidates = getProofreadModelCandidates(mode, selectedModel);
+  const thinkingProfile = getProofreadThinkingProfile(mode);
+  const availableModels = await listGenerateContentModels(apiKey);
+  const listedResults = modelCandidates.map((modelName) => {
+    const resolvedModel = findAvailableProofreadModel(availableModels, modelName);
+    return {
+      modelName,
+      resolvedModel,
+      listed: Boolean(resolvedModel),
+      available: false,
+      tested: false,
+      message: resolvedModel ? '' : 'ListModels に見つかりません',
+    };
+  });
+  const results = [];
+
+  for (const listedResult of listedResults) {
+    if (!listedResult.resolvedModel) {
+      results.push(listedResult);
+      continue;
+    }
+
+    const probeResult = await probeProofreadModel({
+      apiKey,
+      modelName: listedResult.modelName,
+      resolvedModel: listedResult.resolvedModel,
+      thinkingProfile,
+    });
+    results.push({
+      ...listedResult,
+      ...probeResult,
+    });
+
+    if (probeResult.available && mode !== GEMINI_MODEL_MODES.manual) {
+      break;
+    }
+  }
+
+  if (mode !== GEMINI_MODEL_MODES.manual && results.length < listedResults.length) {
+    results.push(
+      ...listedResults.slice(results.length).map((result) => ({
+        ...result,
+        message: '上位候補が応答できたため未確認',
+      }))
+    );
+  }
+
+  return {
+    mode,
+    selectedModel,
+    results,
+  };
 }
 
 async function trackBrowserDownload({ url, filename, sourceTabId, requestId, outputType, blobUrl = null }) {
@@ -1191,7 +1487,24 @@ chrome.runtime.onMessage.addListener((message, sender, sendResponse) => {
       })
       .catch((error) => {
         console.error('[ZenstudyTool BG] Proofread error:', error);
-        sendResponse({ success: false, message: error.message || 'AI校正に失敗しました' });
+        sendResponse({
+          success: false,
+          message: error.message || 'AI校正に失敗しました',
+          code: error.code || '',
+          status: error.status || 0,
+        });
+      });
+    return true;
+  }
+
+  if (message.type === MESSAGE_TYPES.testProofreadModels) {
+    testProofreadModelsAvailability()
+      .then((result) => {
+        sendResponse({ success: true, ...result });
+      })
+      .catch((error) => {
+        console.error('[ZenstudyTool BG] Proofread model test error:', error);
+        sendResponse({ success: false, message: error.message || 'モデル接続テストに失敗しました' });
       });
     return true;
   }

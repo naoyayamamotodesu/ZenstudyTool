@@ -184,6 +184,47 @@
     .api-key-link:hover {
       text-decoration: underline;
     }
+    .ai-test-row {
+      display: flex;
+      align-items: center;
+      gap: 8px;
+      margin-top: 10px;
+    }
+    .ai-test-button {
+      height: 30px;
+      padding: 0 10px;
+      border: 1px solid #d6d9de;
+      border-radius: 8px;
+      background-color: #fff;
+      color: #222;
+      font-size: 11px;
+      font-weight: 700;
+      cursor: pointer;
+      white-space: nowrap;
+    }
+    .ai-test-button:hover {
+      border-color: #0077d3;
+      color: #0077d3;
+    }
+    .ai-test-button:disabled {
+      cursor: default;
+      color: #999;
+      background-color: #f6f7f9;
+      border-color: #e3e5e8;
+    }
+    .ai-test-result {
+      min-height: 16px;
+      font-size: 11px;
+      line-height: 1.4;
+      color: #666;
+      word-break: break-word;
+    }
+    .ai-test-result.ok {
+      color: #147a2e;
+    }
+    .ai-test-result.error {
+      color: #b42318;
+    }
     /* iOS風の美しく滑らかなトグルスイッチ */
     .switch {
       position: relative;
@@ -288,6 +329,29 @@
       .api-key-link {
         color: #4daafc;
       }
+      .ai-test-button {
+        background-color: #2d2d30;
+        border-color: #444;
+        color: #eee;
+      }
+      .ai-test-button:hover {
+        border-color: #4daafc;
+        color: #4daafc;
+      }
+      .ai-test-button:disabled {
+        color: #666;
+        background-color: #252526;
+        border-color: #333;
+      }
+      .ai-test-result {
+        color: #bbb;
+      }
+      .ai-test-result.ok {
+        color: #70d889;
+      }
+      .ai-test-result.error {
+        color: #ff8a80;
+      }
       .slider {
         background-color: #39393d;
       }
@@ -386,6 +450,10 @@
       <div class="api-key-meta">
         <div id="geminiApiKeyStatus" class="api-key-status"></div>
         <a href="https://aistudio.google.com/apikey" target="_blank" rel="noopener noreferrer" class="api-key-link">APIキー取得</a>
+      </div>
+      <div class="ai-test-row">
+        <button type="button" id="testProofreadModels" class="ai-test-button">モデル接続テスト</button>
+        <div id="proofreadModelTestResult" class="ai-test-result"></div>
       </div>
     </section>
   </div>

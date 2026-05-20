@@ -85,6 +85,8 @@ DOM操作やデータ抽出、WebAssemblyを用いたメディア処理などの
 - 手動指定では、`gemini-3.1-pro-preview` / `gemini-3.5-flash` / `gemini-3-flash-preview` / `gemini-3.1-flash-lite` / `gemini-3.1-flash-lite-preview` / `gemini-2.5-flash` / `gemini-2.5-flash-lite` / `gemini-2.5-pro` / `gemma-4-31b-it` / `gemma-4-26b-a4b-it` から選択できます。
 - 思考設定は、手動指定と自動選択（バランス）では標準、自動選択（速度優先）では最速、自動選択（精度優先）では最高に設定します。
 - Gemma 系は常に `-it` 系の hosted model を使用します。
+- 「モデル接続テスト」で、現在の API キーとモデルモードから実際に応答できる候補を事前確認できます。
+- 校正後の文字数が設問の字数指定から外れる、または元の文章から大きく変化した場合、その欄は失敗扱いになり、元の入力内容は上書きされません。
 
 ## 動画ダウンロード仕様
 

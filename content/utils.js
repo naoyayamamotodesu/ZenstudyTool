@@ -157,6 +157,66 @@ const formatByteSize = (bytes) => {
   return `${value.toFixed(fractionDigits)}${units[unitIndex]}`;
 };
 
+const normalizeCharacterRuleText = (text) => {
+  return String(text || "")
+    .replace(/[０-９]/g, (digit) => String.fromCharCode(digit.charCodeAt(0) - 0xFEE0))
+    .replace(/\u3000/g, " ")
+    .replace(/\s+/g, " ")
+    .trim();
+};
+
+const parseCharacterCountRule = (text) => {
+  const normalized = normalizeCharacterRuleText(text);
+  const rule = { min: null, max: null };
+
+  const explicitMin = normalized.match(/(\d{1,5})\s*(?:字|文字)\s*以上/);
+  if (explicitMin) rule.min = Number.parseInt(explicitMin[1], 10) || null;
+
+  const explicitMax = normalized.match(/(\d{1,5})\s*(?:字|文字)\s*(?:以内|以下)/);
+  if (explicitMax) rule.max = Number.parseInt(explicitMax[1], 10) || null;
+
+  const range = normalized.match(/(\d{1,5})\s*[~〜～\-－]\s*\d{1,5}\s*(?:字|文字)/);
+  if (range) {
+    const rangeMax = normalized.match(/\d{1,5}\s*[~〜～\-－]\s*(\d{1,5})\s*(?:字|文字)/);
+    rule.min = rule.min || Number.parseInt(range[1], 10) || null;
+    rule.max = rule.max || Number.parseInt(rangeMax?.[1] || "", 10) || null;
+  }
+
+  if (rule.min && rule.max && rule.min > rule.max) {
+    return { min: rule.max, max: rule.min };
+  }
+
+  return rule;
+};
+
+const collectQuestionTextForField = (field) => {
+  const item = field.closest("li.exercise-item, .exercise-item, .answer-area") || field.closest("section.exercise");
+  const section = field.closest("section.exercise");
+  const parts = [
+    section?.querySelector(".statement")?.textContent || "",
+    item?.querySelector(".question")?.textContent || "",
+    item && !item.querySelector(".question") ? item.textContent || "" : "",
+  ];
+
+  return normalizeCharacterRuleText(parts.join(" "));
+};
+
+const getAnswerLengthRuleForField = (field) => {
+  const rule = parseCharacterCountRule(collectQuestionTextForField(field));
+  return rule.min || rule.max ? rule : null;
+};
+
+const countAnswerCharacters = (value) => {
+  return String(value || "").replace(/\r\n/g, "\n").length;
+};
+
+const formatCharacterCountRule = (rule) => {
+  if (!rule?.min && !rule?.max) return "";
+  if (rule.min && rule.max) return `${rule.min}字以上${rule.max}字以内`;
+  if (rule.min) return `${rule.min}字以上`;
+  return `${rule.max}字以内`;
+};
+
 /**
  * 日割り秒数を "X時間Y分" 形式にフォーマットする
  * @param {number} seconds

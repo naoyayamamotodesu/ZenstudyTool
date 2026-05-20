@@ -236,6 +236,7 @@ class ZenstudyToolProofreader {
       .forEach((button) => {
         // 元に戻す状態のボタンはリセットしない
         if (button.dataset.zstProofreadState === 'undo') return;
+        if (button.dataset.zstProofreadState === 'failed') return;
         
         this.setProofreadButtonState(
           button,
@@ -262,7 +263,7 @@ class ZenstudyToolProofreader {
     return (text || '').replace(/\r/g, '\n').replace(/\u3000/g, ' ').replace(/[ \t]+/g, ' ').replace(/\n{3,}/g, '\n\n').trim();
   }
 
-  collectFieldContext(field) {
+  collectFieldContext(field, lengthRule = getAnswerLengthRuleForField(field)) {
     const contextLines = this.getPageContextLines();
     const section = field.closest('section.exercise');
     const item = field.closest('li.exercise-item, .exercise-item, .answer-area');
@@ -270,6 +271,10 @@ class ZenstudyToolProofreader {
     const questionText = this.normalizeContextText(item?.querySelector('.question')?.textContent || '');
     if (statementText) contextLines.push(`大問: ${statementText}`);
     if (questionText) contextLines.push(`設問: ${questionText}`);
+    const lengthRuleText = formatCharacterCountRule(lengthRule);
+    if (lengthRuleText) {
+      contextLines.push(`字数指定: ${lengthRuleText}（校正では元の文量を保ち、字数を満たすために内容を追加しない）`);
+    }
     return contextLines.join('\n');
   }
 
@@ -280,7 +285,14 @@ class ZenstudyToolProofreader {
   createProofreadTarget(field) {
     const value = typeof field?.value === 'string' ? field.value.replace(/\r\n/g, '\n').trim() : '';
     if (!value) return null;
-    return { element: field, value, context: this.collectFieldContext(field) };
+    const lengthRule = getAnswerLengthRuleForField(field);
+    return {
+      element: field,
+      value,
+      context: this.collectFieldContext(field, lengthRule),
+      lengthRule,
+      originalLength: countAnswerCharacters(value),
+    };
   }
 
   ensureFieldProofreadButtons(iframe, iframeDoc, fields = this.getVisibleProofreadFields(iframeDoc)) {
@@ -304,6 +316,9 @@ class ZenstudyToolProofreader {
           this.handleSingleFieldProofreadClick(iframe, field, button);
         }
       });
+      field.addEventListener('input', () => {
+        this.clearFieldFailure(field);
+      });
       actionRow.appendChild(button);
       fieldParent.insertBefore(row, field);
       row.appendChild(field);
@@ -324,7 +339,12 @@ class ZenstudyToolProofreader {
         promptContext: payload.context,
       }, (response, lastError) => {
         if (lastError) return reject(new Error(lastError.message || 'AI校正に失敗しました'));
-        if (!response?.success || typeof response.correctedText !== 'string') return reject(new Error(response?.message || 'AI校正に失敗しました'));
+        if (!response?.success || typeof response.correctedText !== 'string') {
+          const error = new Error(response?.message || 'AI校正に失敗しました');
+          error.code = response?.code || '';
+          error.status = response?.status || 0;
+          return reject(error);
+        }
         resolve(response.correctedText);
       });
     });
@@ -340,15 +360,45 @@ class ZenstudyToolProofreader {
     field.dispatchEvent(new EventCtor('change', { bubbles: true }));
   }
 
+  getFieldProofreadButton(field) {
+    return field.parentNode?.querySelector(`.${CSS_CLASSES.fieldProofreadButton}`) || null;
+  }
+
   validateCorrectedText(target, correctedText) {
+    const correctedCount = countAnswerCharacters(correctedText);
+    const originalCount = target.originalLength || countAnswerCharacters(target.value);
     if (!correctedText.trim()) throw new Error('校正結果が空でした');
-    if (target.element.maxLength > 0 && correctedText.length > target.element.maxLength) throw new Error('校正結果が入力上限を超えたため反映できませんでした');
+    if (target.element.maxLength > 0 && correctedCount > target.element.maxLength) {
+      throw new Error(`校正結果が入力上限を${correctedCount - target.element.maxLength}文字超えたため反映できませんでした`);
+    }
+
+    const rule = target.lengthRule;
+    if (rule?.max && correctedCount > rule.max) {
+      throw new Error(`校正結果が指定文字数を${correctedCount - rule.max}文字超えたため反映できませんでした`);
+    }
+    if (rule?.min && correctedCount < rule.min) {
+      throw new Error(`校正結果が指定文字数を${rule.min - correctedCount}文字下回ったため反映できませんでした`);
+    }
+
+    if (originalCount >= 80) {
+      const allowedDelta = Math.max(30, Math.ceil(originalCount * 0.2));
+      const actualDelta = Math.abs(correctedCount - originalCount);
+      if (actualDelta > allowedDelta) {
+        throw new Error(`校正結果の文字数が元の文章から大きく変化したため反映できませんでした（${originalCount}文字 → ${correctedCount}文字）`);
+      }
+    }
   }
 
   setFieldButtonsDisabled(iframeDoc, disabled) {
     iframeDoc.querySelectorAll(`.${CSS_CLASSES.fieldProofreadButton}`).forEach((btn) => {
       if (btn.dataset.zstProofreadState !== 'undo') btn.disabled = disabled;
     });
+  }
+
+  shouldStopBatchOnError(error) {
+    if (['MISSING_API_KEY', 'EMPTY_TEXT'].includes(error?.code)) return true;
+    if (error?.status === 401 || error?.status === 403) return true;
+    return /api[_\s-]*key|key not valid|permission|権限|APIキー/i.test(error?.message || '');
   }
 
   handleUndoClick(field, button) {
@@ -506,6 +556,71 @@ class ZenstudyToolProofreader {
     }
   }
 
+  getFieldFeedbackAnchor(field) {
+    const rowContainer = field.parentNode;
+    return rowContainer && rowContainer.classList.contains(CSS_CLASSES.fieldProofreadRow)
+      ? rowContainer
+      : field;
+  }
+
+  getFieldErrorElement(field) {
+    return field.dataset.zstProofreadErrorId
+      ? field.ownerDocument.getElementById(field.dataset.zstProofreadErrorId)
+      : null;
+  }
+
+  showFieldError(field, message) {
+    const doc = field.ownerDocument;
+    let errorView = this.getFieldErrorElement(field);
+    if (!errorView) {
+      errorView = doc.createElement('div');
+      errorView.id = `__ZENSTUDYTOOL_proofreadError_${Date.now()}_${Math.floor(Math.random() * 100000)}`;
+      field.dataset.zstProofreadErrorId = errorView.id;
+      const anchor = this.getFieldFeedbackAnchor(field);
+      if (!anchor?.parentNode) return;
+      anchor.parentNode.insertBefore(errorView, anchor.nextSibling);
+    }
+
+    Object.assign(errorView.style, {
+      marginTop: '10px',
+      padding: '10px 12px',
+      border: '1px solid #ff4d4f',
+      borderRadius: '6px',
+      backgroundColor: '#fff2f0',
+      color: '#a8071a',
+      fontSize: '12px',
+      lineHeight: '1.5',
+      whiteSpace: 'pre-wrap',
+      wordBreak: 'break-word',
+    });
+    errorView.textContent = message;
+  }
+
+  removeFieldError(field) {
+    const errorView = this.getFieldErrorElement(field);
+    if (errorView) errorView.remove();
+    delete field.dataset.zstProofreadErrorId;
+  }
+
+  markFieldFailure(field, button, message) {
+    this.removeDiff(field);
+    this.showFieldError(field, message);
+    if (!button) return;
+    button.dataset.zstProofreadState = 'failed';
+    this.setProofreadButtonState(button, FIELD_PROOFREAD_BUTTON_TEXT.failed, 'error', false, message);
+  }
+
+  clearFieldFailure(field) {
+    const button = this.getFieldProofreadButton(field);
+    if (button?.dataset.zstProofreadState === 'failed') {
+      button.dataset.zstProofreadState = 'ready';
+      if (!this.isProcessing) {
+        this.setProofreadButtonState(button, FIELD_PROOFREAD_BUTTON_TEXT.ready, 'default', false, this.getProofreadButtonTitle(false));
+      }
+    }
+    this.removeFieldError(field);
+  }
+
   async handleSingleFieldProofreadClick(iframe, field, button) {
     if (this.isProcessing) return;
     if (!this.enabled || !this.apiKeyConfigured) return alert(this.getProofreadButtonTitle(false));
@@ -514,6 +629,7 @@ class ZenstudyToolProofreader {
     const target = this.createProofreadTarget(field);
     if (!target) return alert('入力内容がありません。');
 
+    this.clearFieldFailure(field);
     this.isProcessing = true;
     this.setButtonPresentation(PROOFREAD_BUTTON_TEXT.ready, 'default', true);
     this.setFieldButtonsDisabled(iframeDoc, true);
@@ -525,6 +641,7 @@ class ZenstudyToolProofreader {
       const correctedText = await this.requestProofread(target);
       this.validateCorrectedText(target, correctedText);
       this.applyFieldValue(target.element, correctedText);
+      this.removeFieldError(target.element);
       this.showDiff(target.element, originalText, correctedText);
       target.element.dataset.zstOriginalText = originalText;
       button.dataset.zstProofreadState = 'undo';
@@ -533,12 +650,12 @@ class ZenstudyToolProofreader {
     } catch (err) {
       console.error(err);
       this.stopSpinner();
-      this.setProofreadButtonState(button, FIELD_PROOFREAD_BUTTON_TEXT.failed, 'error', true);
+      this.markFieldFailure(field, button, err.message || 'AI校正に失敗しました');
       alert(`失敗: ${err.message}`);
-      window.setTimeout(() => this.updateReadyButton(iframeDoc), 2000);
     } finally {
       this.isProcessing = false;
       field.classList.remove('zst-proofreading-field');
+      this.updateReadyButton(iframeDoc);
     }
   }
 
@@ -554,29 +671,48 @@ class ZenstudyToolProofreader {
     this.setFieldButtonsDisabled(iframeDoc, true);
     this.startSpinner(this.btn, PROOFREAD_BUTTON_TEXT.working);
 
+    let successCount = 0;
+    let failureCount = 0;
+
     try {
       for (let i = 0; i < targets.length; i++) {
         const target = targets[i];
         this.startSpinner(this.btn, `${PROOFREAD_BUTTON_TEXT.working} ${i+1}/${targets.length}`);
         target.element.classList.add('zst-proofreading-field');
+        const fieldButton = this.getFieldProofreadButton(target.element);
+        this.clearFieldFailure(target.element);
         try {
           const originalText = target.value;
           const correctedText = await this.requestProofread(target);
           this.validateCorrectedText(target, correctedText);
           this.applyFieldValue(target.element, correctedText);
+          this.removeFieldError(target.element);
           this.showDiff(target.element, originalText, correctedText);
           target.element.dataset.zstOriginalText = originalText;
-          const btn = target.element.parentNode.querySelector(`.${CSS_CLASSES.fieldProofreadButton}`);
-          if (btn) {
-            btn.dataset.zstProofreadState = 'undo';
-            this.setProofreadButtonState(btn, '元に戻す', 'default', false, '元のテキストに戻します');
+          if (fieldButton) {
+            fieldButton.dataset.zstProofreadState = 'undo';
+            this.setProofreadButtonState(fieldButton, '元に戻す', 'default', false, '元のテキストに戻します');
+          }
+          successCount += 1;
+        } catch (err) {
+          failureCount += 1;
+          console.error(err);
+          this.markFieldFailure(target.element, fieldButton, err.message || 'AI校正に失敗しました');
+          if (this.shouldStopBatchOnError(err)) {
+            throw err;
           }
         } finally {
           target.element.classList.remove('zst-proofreading-field');
         }
       }
       this.stopSpinner();
-      this.setButtonPresentation(PROOFREAD_BUTTON_TEXT.success, 'success', true);
+      if (failureCount > 0) {
+        const label = `校正完了 ${successCount}/${targets.length}（失敗${failureCount}）`;
+        this.setButtonPresentation(label, successCount > 0 ? 'success' : 'error', true);
+        alert(`AI校正が完了しました。成功: ${successCount}件 / 失敗: ${failureCount}件`);
+      } else {
+        this.setButtonPresentation(PROOFREAD_BUTTON_TEXT.success, 'success', true);
+      }
     } catch (err) {
       console.error(err);
       this.stopSpinner();

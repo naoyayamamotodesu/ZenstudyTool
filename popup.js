@@ -3,6 +3,7 @@ const {
   GEMINI_MODEL_MODES,
   GEMINI_MODEL_MANUAL_OPTIONS,
   DEFAULT_GEMINI_MODEL,
+  MESSAGE_TYPES,
 } = globalThis.ZenstudyToolConstants;
 
 document.addEventListener('DOMContentLoaded', () => {
@@ -20,6 +21,8 @@ document.addEventListener('DOMContentLoaded', () => {
   const geminiSelectedModel = document.getElementById('geminiSelectedModel');
   const saveGeminiApiKey = document.getElementById('saveGeminiApiKey');
   const geminiApiKeyStatus = document.getElementById('geminiApiKeyStatus');
+  const testProofreadModels = document.getElementById('testProofreadModels');
+  const proofreadModelTestResult = document.getElementById('proofreadModelTestResult');
   let lastSavedApiKey = '';
   const modelModeLabels = {
     [GEMINI_MODEL_MODES.auto]: '自動選択（バランス）',
@@ -87,6 +90,13 @@ document.addEventListener('DOMContentLoaded', () => {
       const suffix = toggleProofread && !toggleProofread.checked ? ' / AI校正はOFF' : '';
       geminiApiKeyStatus.textContent = `${message}${suffix}`;
     }
+  };
+
+  const setModelTestResult = (message, tone = '') => {
+    if (!proofreadModelTestResult) return;
+    proofreadModelTestResult.textContent = message;
+    proofreadModelTestResult.classList.toggle('ok', tone === 'ok');
+    proofreadModelTestResult.classList.toggle('error', tone === 'error');
   };
 
   const getCurrentModelSettings = () => {
@@ -158,6 +168,61 @@ document.addEventListener('DOMContentLoaded', () => {
 
       const suffix = hasUnsavedApiKey() ? ' / APIキーは未保存' : '';
       setApiKeyStatus(`モデル設定を保存しました (${getCurrentModeLabel()})${suffix}`);
+      setModelTestResult('');
+    });
+  };
+
+  const formatModelTestResult = (response) => {
+    const results = Array.isArray(response?.results) ? response.results : [];
+    const available = results.filter((result) => result.available);
+    const testedUnavailable = results.filter((result) => result.tested && !result.available);
+    const untestedCount = results.filter((result) => !result.tested && result.listed).length;
+    if (available.length === 0) {
+      const firstFailure = testedUnavailable[0];
+      return {
+        tone: 'error',
+        message: firstFailure?.message
+          ? `応答不可: ${firstFailure.modelName}（${firstFailure.message}）`
+          : 'この設定で応答できるモデルが見つかりません',
+      };
+    }
+
+    const firstAvailable = available[0];
+    const parts = [];
+    if (testedUnavailable.length > 0) parts.push(`不可${testedUnavailable.length}`);
+    if (untestedCount > 0) parts.push(`未確認${untestedCount}`);
+    const suffix = parts.length > 0 ? ` / ${parts.join(' / ')}` : '';
+    return {
+      tone: 'ok',
+      message: `応答可: ${firstAvailable.modelName}${suffix}`,
+    };
+  };
+
+  const runModelTest = () => {
+    if (!testProofreadModels) return;
+    if (hasUnsavedApiKey()) {
+      setModelTestResult('APIキーを保存してからテストしてください', 'error');
+      return;
+    }
+
+    testProofreadModels.disabled = true;
+    testProofreadModels.textContent = '確認中...';
+    setModelTestResult('');
+
+    chrome.runtime.sendMessage({
+      type: MESSAGE_TYPES.testProofreadModels,
+    }, (response) => {
+      const lastError = chrome.runtime?.lastError || null;
+      testProofreadModels.disabled = false;
+      testProofreadModels.textContent = 'モデル接続テスト';
+
+      if (lastError || !response?.success) {
+        setModelTestResult(response?.message || lastError?.message || 'モデル接続テストに失敗しました', 'error');
+        return;
+      }
+
+      const formatted = formatModelTestResult(response);
+      setModelTestResult(formatted.message, formatted.tone);
     });
   };
 
@@ -253,9 +318,14 @@ document.addEventListener('DOMContentLoaded', () => {
     saveGeminiApiKey.addEventListener('click', saveApiKey);
   }
 
+  if (testProofreadModels) {
+    testProofreadModels.addEventListener('click', runModelTest);
+  }
+
   if (geminiApiKeyInput) {
     geminiApiKeyInput.addEventListener('input', () => {
       setApiKeyStatus(`APIキーを保存してください (${getCurrentModeLabel()})`);
+      setModelTestResult('');
     });
     geminiApiKeyInput.addEventListener('keydown', (event) => {
       if (event.key === 'Enter') {

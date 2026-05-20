@@ -70,6 +70,7 @@
     downloadVideo: "ZST_DOWNLOAD_VIDEO",
     downloadSlideImages: "ZST_DOWNLOAD_SLIDE_IMAGES",
     proofreadText: "ZST_PROOFREAD_TEXT",
+    testProofreadModels: "ZST_TEST_PROOFREAD_MODELS",
     conversionProgress: "ZST_CONVERSION_PROGRESS",
     conversionComplete: "ZST_CONVERSION_COMPLETE",
     convertM3u8: "ZST_CONVERT_M3U8",
