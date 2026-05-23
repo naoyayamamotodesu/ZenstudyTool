@@ -8,12 +8,18 @@ class ZenstudyToolDownloader {
     this.lastSelectedTitle = '';
     this.buttonGroup = null;
     this.btn = null;
+    this.batchBtn = null;
     this.slideBtn = null;
     this.resetTimerId = null;
+    this.batchResetTimerId = null;
     this.slideResetTimerId = null;
     this.waitingPollTimerId = null;
     this.activeConversionRequestId = null;
     this.isDownloading = false;
+    this.activeDownloadCompletion = null;
+    this.isBatchDownloading = false;
+    this.batchStopRequested = false;
+    this.batchCurrentTargetKey = '';
     this.activeSlideDownloadRequestId = null;
     this.isSlideDownloading = false;
     this.nextDownloadSequence = 0;
@@ -118,6 +124,35 @@ class ZenstudyToolDownloader {
     return this.slideBtn;
   }
 
+  getBatchDownloadButton() {
+    if (this.batchBtn && document.body.contains(this.batchBtn)) return this.batchBtn;
+    const existingBtn = document.getElementById(ELEMENT_IDS.batchDownloadButton);
+    this.batchBtn = existingBtn || null;
+    return this.batchBtn;
+  }
+
+  removeBatchDownloadButton() {
+    if (this.isBatchDownloading) return;
+
+    const button = this.getBatchDownloadButton();
+    if (button) button.remove();
+    this.batchBtn = null;
+  }
+
+  ensureBatchDownloadButton(buttonGroup) {
+    let button = this.getBatchDownloadButton();
+    if (button) return button;
+
+    this.batchBtn = document.createElement('button');
+    button = this.batchBtn;
+    button.id = ELEMENT_IDS.batchDownloadButton;
+    button.type = 'button';
+    button.className = CSS_CLASSES.batchDownloadButton;
+    button.addEventListener('click', () => this.handleBatchDownloadClick());
+    buttonGroup.appendChild(button);
+    return button;
+  }
+
   removeSlideDownloadButton() {
     if (this.isSlideDownloading) return;
 
@@ -178,6 +213,11 @@ class ZenstudyToolDownloader {
   syncLessonContext() {
     const nextFingerprint = this.getCurrentLessonFingerprint();
     if (nextFingerprint === this.activeLessonFingerprint) return false;
+
+    if (this.isBatchDownloading && this.activeDownloadCompletion) {
+      this.requestBatchStop();
+      this.resolveActiveDownloadCompletion(false, '保存中に教材が切り替わりました');
+    }
 
     this.activeLessonFingerprint = nextFingerprint;
     this.activeLessonChangedAt = nextFingerprint ? this.getCurrentLessonStartedAt() : 0;
@@ -332,6 +372,10 @@ class ZenstudyToolDownloader {
     const listItem = event.target.closest('ul[aria-label="必修教材リスト"] li');
     if (!listItem) return;
     if (!listItem.querySelector('svg[type="movie-rounded"]')) return;
+
+    if (event.isTrusted && this.isBatchDownloading) {
+      this.requestBatchStop();
+    }
 
     const title = this.pickTitleFromNode(listItem);
     if (!title) return;
@@ -604,12 +648,159 @@ class ZenstudyToolDownloader {
     return images;
   }
 
+  getVideoLessonItems() {
+    return Array.from(
+      document.querySelectorAll('ul[aria-label="必修教材リスト"] > li')
+    ).filter((item) => item.querySelector('svg[type="movie-rounded"]'));
+  }
+
+  getVideoLessonTargets() {
+    const occurrenceByTitle = new Map();
+
+    return this.getVideoLessonItems().map((item, index) => {
+      const title = this.pickTitleFromNode(item) || `動画 ${index + 1}`;
+      const occurrence = occurrenceByTitle.get(title) || 0;
+      occurrenceByTitle.set(title, occurrence + 1);
+
+      return { title, occurrence, index };
+    });
+  }
+
+  findVideoLessonItem(target) {
+    const items = this.getVideoLessonItems();
+    const matches = items.filter((item) => this.pickTitleFromNode(item) === target.title);
+    return matches[target.occurrence] || items[target.index] || null;
+  }
+
+  getBatchTargetKey(target) {
+    return `${target.title}\u0000${target.occurrence}`;
+  }
+
+  async resolveInitialBatchTargetKey(targets) {
+    let title = '';
+    try {
+      title = await this.resolveTitle();
+    } catch (_) {
+      return '';
+    }
+
+    const normalizedTitle = ZenstudyToolDownloaderUtils.normalizeTitleText(title);
+    const target = targets.find((item) => (
+      ZenstudyToolDownloaderUtils.normalizeTitleText(item.title) === normalizedTitle
+    ));
+    return target ? this.getBatchTargetKey(target) : '';
+  }
+
+  waitForBatchCondition(predicate, timeoutMs = BATCH_VIDEO_READY_TIMEOUT_MS) {
+    return new Promise((resolve) => {
+      const deadline = Date.now() + timeoutMs;
+
+      const check = () => {
+        if (!this.isBatchDownloading || this.batchStopRequested) {
+          resolve(false);
+          return;
+        }
+
+        if (predicate()) {
+          resolve(true);
+          return;
+        }
+
+        if (Date.now() >= deadline) {
+          resolve(false);
+          return;
+        }
+
+        setTimeout(check, BATCH_POLL_INTERVAL_MS);
+      };
+
+      check();
+    });
+  }
+
+  async selectBatchLesson(target) {
+    const item = this.findVideoLessonItem(target);
+    if (!item) return false;
+
+    const targetKey = this.getBatchTargetKey(target);
+    const isAlreadyOpen = targetKey === this.batchCurrentTargetKey;
+    const previousFingerprint = this.getCurrentLessonFingerprint();
+    const clickTarget = item.querySelector('div') || item;
+    this.lastSelectedTitle = target.title;
+
+    if (!isAlreadyOpen) {
+      clickTarget.click();
+      const changed = await this.waitForBatchCondition(
+        () => this.getCurrentLessonFingerprint() !== previousFingerprint
+      );
+      if (!changed) return false;
+    }
+
+    this.batchCurrentTargetKey = targetKey;
+    this.syncLessonContext();
+    this.checkAndShow();
+    return true;
+  }
+
+  async waitForBatchVideoInfo() {
+    return this.waitForBatchCondition(() => {
+      this.syncLessonContext();
+      if (this.hasCurrentVideoInfo() || this.applyDomVideoInfo()) return true;
+      this.requestLatestVideoInfo();
+      return false;
+    });
+  }
+
+  resolveActiveDownloadCompletion(success, message = '') {
+    if (!this.activeDownloadCompletion) return;
+
+    const pending = this.activeDownloadCompletion;
+    this.activeDownloadCompletion = null;
+    pending.resolve({ success, message });
+  }
+
   setButtonState(state, text) {
     this.setActionButtonState(this.getDownloadButton(), state, text);
   }
 
+  setBatchButtonState(state, text) {
+    this.setActionButtonState(this.getBatchDownloadButton(), state, text);
+  }
+
   setSlideButtonState(state, text) {
     this.setActionButtonState(this.getSlideDownloadButton(), state, text);
+  }
+
+  setBatchReadyState() {
+    const btn = this.getBatchDownloadButton();
+    if (!btn || this.isBatchDownloading) return;
+
+    this.setBatchButtonState('ready', BATCH_DOWNLOAD_BUTTON_TEXT.ready);
+    btn.disabled = false;
+    btn.title = '';
+  }
+
+  setBatchBusyState(text) {
+    const btn = this.getBatchDownloadButton();
+    if (!btn) return;
+
+    this.setBatchButtonState('loading', text);
+    btn.disabled = false;
+    btn.title = 'クリックで次の動画への移動を停止';
+  }
+
+  setBatchResultState(state, text) {
+    const btn = this.getBatchDownloadButton();
+    if (!btn) return;
+
+    this.setBatchButtonState(state, text);
+    btn.disabled = false;
+    btn.title = '';
+
+    if (this.batchResetTimerId) clearTimeout(this.batchResetTimerId);
+    this.batchResetTimerId = setTimeout(() => {
+      this.setBatchReadyState();
+    }, 3500);
   }
 
   setReadyState() {
@@ -622,7 +813,7 @@ class ZenstudyToolDownloader {
     if (this.hasCurrentVideoInfo()) {
       this.stopWaitingPoll();
       this.setButtonState('ready', DOWNLOAD_BUTTON_TEXT.ready);
-      btn.disabled = false;
+      btn.disabled = this.isBatchDownloading;
     } else {
       this.setButtonState('waiting', DOWNLOAD_BUTTON_TEXT.waiting);
       btn.disabled = true;
@@ -665,18 +856,27 @@ class ZenstudyToolDownloader {
   setBusyState(text = DOWNLOAD_BUTTON_TEXT.preparing) {
     const btn = this.getDownloadButton();
     if (!btn) return;
+    if (this.resetTimerId) {
+      clearTimeout(this.resetTimerId);
+      this.resetTimerId = null;
+    }
     this.setButtonState('loading', text);
     btn.disabled = true;
   }
 
-  setResultState(state, text) {
+  setResultState(state, text, autoReset = true) {
     const btn = this.getDownloadButton();
     if (!btn) return;
 
     this.setButtonState(state, text);
-    btn.disabled = state !== 'error';
+    btn.disabled = this.isBatchDownloading || state !== 'error';
 
     if (this.resetTimerId) clearTimeout(this.resetTimerId);
+    if (!autoReset) {
+      this.resetTimerId = null;
+      return;
+    }
+
     this.resetTimerId = setTimeout(() => {
       this.setReadyState();
     }, 2500);
@@ -687,7 +887,7 @@ class ZenstudyToolDownloader {
     if (!btn) return;
 
     this.setSlideButtonState('ready', SLIDE_DOWNLOAD_BUTTON_TEXT.ready);
-    btn.disabled = false;
+    btn.disabled = this.isBatchDownloading;
   }
 
   setSlideBusyState(text = SLIDE_DOWNLOAD_BUTTON_TEXT.preparing) {
@@ -738,6 +938,22 @@ class ZenstudyToolDownloader {
           this.checkAndShow();
         }
       });
+  }
+
+  refreshBatchDownloadButton(buttonGroup) {
+    if (!this.downloadEnabled) {
+      this.removeBatchDownloadButton();
+      return;
+    }
+
+    const targets = this.getVideoLessonTargets();
+    if (targets.length === 0) {
+      this.removeBatchDownloadButton();
+      return;
+    }
+
+    this.ensureBatchDownloadButton(buttonGroup);
+    this.setBatchReadyState();
   }
 
   getTitle() {
@@ -820,6 +1036,7 @@ class ZenstudyToolDownloader {
     const hasRequiredButtons = !this.downloadEnabled || Boolean(btn);
     
     if (hasRequiredButtons) {
+      this.refreshBatchDownloadButton(buttonGroup);
       const needsVideoButtonRefresh = this.downloadEnabled && (
         lessonChanged
         || (!this.hasCurrentVideoInfo() && btn.dataset.state !== 'waiting')
@@ -847,16 +1064,18 @@ class ZenstudyToolDownloader {
     }
 
     if (this.downloadEnabled) {
+      this.refreshBatchDownloadButton(buttonGroup);
       this.setReadyState();
     }
   }
 
-  async startDownload() {
+  async startDownload({ fromBatch = false } = {}) {
     if (!this.downloadEnabled) return false;
+    if (this.isBatchDownloading && !fromBatch) return false;
     if (this.isDownloading || !this.hasCurrentVideoInfo()) return false;
 
     const btn = this.getDownloadButton();
-    if (btn && btn.disabled) return false;
+    if (btn && btn.disabled && !fromBatch) return false;
 
     const requestedVideoInfo = this.videoInfo;
     const downloadSequence = ++this.nextDownloadSequence;
@@ -870,15 +1089,23 @@ class ZenstudyToolDownloader {
     } catch (error) {
       if (this.activeDownloadSequence === downloadSequence) {
         this.resetDownloadState();
-        this.setResultState('error', DOWNLOAD_BUTTON_TEXT.failed);
+        this.setResultState('error', DOWNLOAD_BUTTON_TEXT.failed, !fromBatch);
       }
-      alert(`ダウンロード準備に失敗しました: ${error.message || '不明なエラー'}`);
+      if (!fromBatch) {
+        alert(`ダウンロード準備に失敗しました: ${error.message || '不明なエラー'}`);
+      }
       return false;
     }
 
     if (this.activeDownloadSequence !== downloadSequence) {
       return false;
     }
+
+    const completionPromise = fromBatch
+      ? new Promise((resolve) => {
+        this.activeDownloadCompletion = { resolve, downloadSequence };
+      })
+      : null;
 
     this.setBusyState(DOWNLOAD_BUTTON_TEXT.preparing);
 
@@ -892,11 +1119,14 @@ class ZenstudyToolDownloader {
 
       const handleFailure = (message) => {
         if (isActiveDownload) {
+          this.resolveActiveDownloadCompletion(false, message);
           this.resetDownloadState();
-          this.setResultState('error', DOWNLOAD_BUTTON_TEXT.failed);
+          this.setResultState('error', DOWNLOAD_BUTTON_TEXT.failed, !fromBatch);
         }
 
-        alert('ダウンロードに失敗しました: ' + message);
+        if (!fromBatch) {
+          alert('ダウンロードに失敗しました: ' + message);
+        }
       };
 
       if (error) {
@@ -912,15 +1142,111 @@ class ZenstudyToolDownloader {
       if (!isActiveDownload) return;
     });
 
-    return true;
+    return completionPromise || true;
   }
 
   handleDownloadClick() {
     void this.startDownload();
   }
 
+  requestBatchStop() {
+    if (!this.isBatchDownloading) return;
+    this.batchStopRequested = true;
+    this.setBatchBusyState(BATCH_DOWNLOAD_BUTTON_TEXT.stopping);
+  }
+
+  async startBatchDownload() {
+    if (!this.downloadEnabled || this.isBatchDownloading) return false;
+    if (this.isDownloading || this.isSlideDownloading) return false;
+
+    const targets = this.getVideoLessonTargets();
+    if (targets.length === 0) {
+      this.setBatchResultState('error', BATCH_DOWNLOAD_BUTTON_TEXT.failed);
+      return false;
+    }
+
+    this.isBatchDownloading = true;
+    this.batchStopRequested = false;
+    this.batchCurrentTargetKey = await this.resolveInitialBatchTargetKey(targets);
+    ZENSTUDYTOOL_AUTOMATION_STATE.batchDownloadActive = true;
+
+    let completedCount = 0;
+    let successCount = 0;
+    let failureMessage = '';
+
+    try {
+      for (const target of targets) {
+        if (this.batchStopRequested) break;
+
+        this.setBatchBusyState(`${completedCount}/${targets.length} 保存中`);
+        const selected = await this.selectBatchLesson(target);
+        if (!selected || this.batchStopRequested) {
+          if (!this.batchStopRequested) {
+            failureMessage = '教材の切り替えを確認できませんでした';
+          }
+          break;
+        }
+
+        const ready = await this.waitForBatchVideoInfo();
+        if (!ready || this.batchStopRequested) {
+          if (!this.batchStopRequested) {
+            failureMessage = '動画URLを取得できませんでした';
+          }
+          break;
+        }
+
+        const result = await this.startDownload({ fromBatch: true });
+        completedCount += 1;
+        if (result?.success) {
+          successCount += 1;
+        } else {
+          failureMessage = result?.message || '動画保存に失敗しました';
+          break;
+        }
+      }
+    } finally {
+      this.isBatchDownloading = false;
+      ZENSTUDYTOOL_AUTOMATION_STATE.batchDownloadActive = false;
+      this.batchStopRequested = false;
+      this.batchCurrentTargetKey = '';
+      this.setReadyState();
+    }
+
+    if (completedCount === 0) {
+      if (failureMessage) {
+        this.setBatchResultState('error', BATCH_DOWNLOAD_BUTTON_TEXT.failed);
+      } else {
+        this.setBatchReadyState();
+      }
+      return false;
+    }
+
+    if (successCount === completedCount && completedCount === targets.length) {
+      this.setBatchResultState('success', `${BATCH_DOWNLOAD_BUTTON_TEXT.success} ${successCount}/${targets.length}`);
+      return true;
+    }
+
+    if (failureMessage) {
+      this.setBatchResultState('error', `${successCount}/${targets.length} 成功`);
+      return successCount > 0;
+    }
+
+    this.setBatchResultState('ready', `${successCount}/${targets.length} で停止`);
+    return successCount > 0;
+  }
+
+  handleBatchDownloadClick() {
+    if (this.isBatchDownloading) {
+      this.requestBatchStop();
+      return;
+    }
+
+    void this.startBatchDownload();
+  }
+
   async startSlideDownload() {
     if (!this.slideDownloadEnabled) return false;
+    if (this.isBatchDownloading) return false;
     if (this.isSlideDownloading || !this.hasVideoModalOpen()) return false;
 
     const btn = this.getSlideDownloadButton();
@@ -995,6 +1321,10 @@ class ZenstudyToolDownloader {
   removeButton() {
     this.stopWaitingPoll();
     this.lastSelectedTitle = '';
+    if (this.isBatchDownloading) {
+      this.requestBatchStop();
+    }
+    this.resolveActiveDownloadCompletion(false, '教材画面が閉じられました');
     this.resetDownloadState();
     this.resetSlideDownloadState();
 
@@ -1008,10 +1338,16 @@ class ZenstudyToolDownloader {
       this.slideResetTimerId = null;
     }
 
+    if (this.batchResetTimerId) {
+      clearTimeout(this.batchResetTimerId);
+      this.batchResetTimerId = null;
+    }
+
     const existingGroup = document.getElementById(ELEMENT_IDS.downloadButtonGroup);
     if (existingGroup) existingGroup.remove();
     this.buttonGroup = null;
     this.btn = null;
+    this.batchBtn = null;
     this.slideBtn = null;
   }
 
@@ -1044,11 +1380,13 @@ class ZenstudyToolDownloader {
         this.setBusyState(DOWNLOAD_BUTTON_TEXT.saving);
       }
     } else if (msg.phase === 'done') {
+      this.resolveActiveDownloadCompletion(true);
       this.resetDownloadState();
-      this.setResultState('success', DOWNLOAD_BUTTON_TEXT.success);
+      this.setResultState('success', DOWNLOAD_BUTTON_TEXT.success, !this.isBatchDownloading);
     } else if (msg.phase === 'error') {
+      this.resolveActiveDownloadCompletion(false, msg.error || 'ダウンロードに失敗しました');
       this.resetDownloadState();
-      this.setResultState('error', DOWNLOAD_BUTTON_TEXT.failed);
+      this.setResultState('error', DOWNLOAD_BUTTON_TEXT.failed, !this.isBatchDownloading);
     }
   }
 

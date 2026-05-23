@@ -28,6 +28,7 @@
 }
 
 .__ZENSTUDYTOOL_downloadButton,
+.__ZENSTUDYTOOL_batchDownloadButton,
 .__ZENSTUDYTOOL_slideDownloadButton {
   all: initial;
   box-sizing: border-box;
@@ -50,6 +51,7 @@
 
 .__ZENSTUDYTOOL_downloadButton[data-state="waiting"],
 .__ZENSTUDYTOOL_downloadButton[data-state="loading"],
+.__ZENSTUDYTOOL_batchDownloadButton[data-state="loading"],
 .__ZENSTUDYTOOL_slideDownloadButton[data-state="waiting"],
 .__ZENSTUDYTOOL_slideDownloadButton[data-state="loading"] {
   background-color: #6f7782;
@@ -59,21 +61,28 @@
   background-color: #0077d3;
 }
 
+.__ZENSTUDYTOOL_batchDownloadButton[data-state="ready"] {
+  background-color: #315da8;
+}
+
 .__ZENSTUDYTOOL_slideDownloadButton[data-state="ready"] {
   background-color: #156f5b;
 }
 
 .__ZENSTUDYTOOL_downloadButton[data-state="success"],
+.__ZENSTUDYTOOL_batchDownloadButton[data-state="success"],
 .__ZENSTUDYTOOL_slideDownloadButton[data-state="success"] {
   background-color: #00a95c;
 }
 
 .__ZENSTUDYTOOL_downloadButton[data-state="error"],
+.__ZENSTUDYTOOL_batchDownloadButton[data-state="error"],
 .__ZENSTUDYTOOL_slideDownloadButton[data-state="error"] {
   background-color: #d44c4c;
 }
 
 .__ZENSTUDYTOOL_downloadButton:disabled,
+.__ZENSTUDYTOOL_batchDownloadButton:disabled,
 .__ZENSTUDYTOOL_slideDownloadButton:disabled {
   cursor: not-allowed;
   opacity: 0.85;

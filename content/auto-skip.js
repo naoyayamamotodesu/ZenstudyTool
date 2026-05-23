@@ -3,6 +3,7 @@ class ZenstudyToolAutoSkip {
     this.enabled = false;
     this.observer = null;
     this.isSkipping = false;
+    this.skipTimerId = null;
     /** 直前にクリックした教材名（連打防止） */
     this.lastClickedName = "";
 
@@ -39,6 +40,11 @@ class ZenstudyToolAutoSkip {
       this.observer.disconnect();
       this.observer = null;
     }
+    if (this.skipTimerId) {
+      clearTimeout(this.skipTimerId);
+      this.skipTimerId = null;
+    }
+    this.isSkipping = false;
     this.lastClickedName = "";
   }
 
@@ -46,7 +52,7 @@ class ZenstudyToolAutoSkip {
    * 教材リストを上から見て、最初の「緑じゃない行」をクリックする。
    */
   checkAndSkip() {
-    if (this.isSkipping) return;
+    if (this.isSkipping || ZENSTUDYTOOL_AUTOMATION_STATE.batchDownloadActive) return;
 
     // 教材リスト・レポートリストをDOM順にまとめて取得
     const items = Array.from(
@@ -67,7 +73,13 @@ class ZenstudyToolAutoSkip {
         this.isSkipping = true;
         this.lastClickedName = name;
 
-        setTimeout(() => {
+        this.skipTimerId = setTimeout(() => {
+          this.skipTimerId = null;
+          if (!this.enabled || ZENSTUDYTOOL_AUTOMATION_STATE.batchDownloadActive) {
+            this.isSkipping = false;
+            return;
+          }
+
           const clickTarget = item.querySelector("div");
           if (clickTarget) clickTarget.click();
           this.isSkipping = false;

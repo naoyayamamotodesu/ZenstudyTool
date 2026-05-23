@@ -22,6 +22,7 @@ const CSS_CLASSES = {
   dailyTarget: "__ZENSTUDYTOOL_dailyTarget",
   downloadButtonGroup: "__ZENSTUDYTOOL_downloadButtonGroup",
   downloadButton: "__ZENSTUDYTOOL_downloadButton",
+  batchDownloadButton: "__ZENSTUDYTOOL_batchDownloadButton",
   slideDownloadButton: "__ZENSTUDYTOOL_slideDownloadButton",
   actionRow: "__ZENSTUDYTOOL_actionRow",
   footerActionButton: "__ZENSTUDYTOOL_footerActionButton",
@@ -37,6 +38,7 @@ const ELEMENT_IDS = {
   copyButton: "__ZENSTUDYTOOL_copy_btn",
   downloadButtonGroup: "__ZENSTUDYTOOL_download_btn_group",
   downloadButton: "__ZENSTUDYTOOL_download_btn",
+  batchDownloadButton: "__ZENSTUDYTOOL_batch_download_btn",
   slideDownloadButton: "__ZENSTUDYTOOL_slide_download_btn",
   proofreadButton: "__ZENSTUDYTOOL_proofread_btn",
 };
@@ -50,6 +52,13 @@ const DOWNLOAD_BUTTON_TEXT = {
   saving: "保存中...",
   success: "完了",
   failed: "失敗",
+};
+
+const BATCH_DOWNLOAD_BUTTON_TEXT = {
+  ready: "単元動画一括保存",
+  stopping: "停止待機中...",
+  success: "一括保存完了",
+  failed: "一部失敗",
 };
 
 const SLIDE_DOWNLOAD_BUTTON_TEXT = {
@@ -85,6 +94,17 @@ const FILTER_POLL_INTERVAL_MS = 2000;
 
 /** 自動スキップの遷移後に次の操作を待つ間隔 (ms) */
 const AUTO_SKIP_DELAY_MS = 1500;
+
+/** 一括保存で教材切り替え後の動画URLを待つ最大時間 (ms) */
+const BATCH_VIDEO_READY_TIMEOUT_MS = 20 * 1000;
+
+/** 一括保存が教材状態を確認する間隔 (ms) */
+const BATCH_POLL_INTERVAL_MS = 250;
+
+const ZENSTUDYTOOL_AUTOMATION_STATE = globalThis.__ZENSTUDYTOOL_automationState || {
+  batchDownloadActive: false,
+};
+globalThis.__ZENSTUDYTOOL_automationState = ZENSTUDYTOOL_AUTOMATION_STATE;
 
 /** ボタンのaria-label */
 const ARIA_LABELS = {
