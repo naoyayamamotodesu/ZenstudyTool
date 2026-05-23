@@ -1167,8 +1167,8 @@ class ZenstudyToolDownloader {
 
     this.isBatchDownloading = true;
     this.batchStopRequested = false;
-    this.batchCurrentTargetKey = await this.resolveInitialBatchTargetKey(targets);
     ZENSTUDYTOOL_AUTOMATION_STATE.batchDownloadActive = true;
+    this.batchCurrentTargetKey = await this.resolveInitialBatchTargetKey(targets);
 
     let completedCount = 0;
     let successCount = 0;
