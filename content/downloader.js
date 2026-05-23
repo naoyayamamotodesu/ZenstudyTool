@@ -1175,10 +1175,10 @@ class ZenstudyToolDownloader {
     let failureMessage = '';
 
     try {
-      for (const target of targets) {
+      for (const [targetIndex, target] of targets.entries()) {
         if (this.batchStopRequested) break;
 
-        this.setBatchBusyState(`${completedCount}/${targets.length} 保存中`);
+        this.setBatchBusyState(`${targetIndex + 1}/${targets.length} 保存中`);
         const selected = await this.selectBatchLesson(target);
         if (!selected || this.batchStopRequested) {
           if (!this.batchStopRequested) {
