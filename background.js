@@ -1315,6 +1315,7 @@ async function trackBrowserDownload({ url, filename, sourceTabId, requestId, out
     url,
     filename,
     saveAs: false,
+    conflictAction: 'uniquify',
   });
 
   const tracked = {
@@ -1531,21 +1532,8 @@ async function handleDownload({ videoInfo, title, sectionTitle }, sourceTabId) {
     const requestId = createRequestId();
 
     if (normalizedVideo.type === 'mp4') {
-      // MP4: 直接ダウンロード
-      const filename = buildDownloadFilename({
-        title,
-        sectionTitle,
-        extension: 'mp4',
-      });
-
-      await trackBrowserDownload({
-        url: normalizedVideo.url,
-        filename,
-        sourceTabId,
-        requestId,
-        outputType: 'mp4',
-      });
-      return { success: true, message: 'MP4ダウンロード開始', requestId };
+      // Raw MP4 downloads can lose our target filename during Chrome filename determination.
+      return await processDirectMP4Download(normalizedVideo.url, title, sectionTitle, sourceTabId, requestId);
     }
 
     // M3U8: offscreen document で処理（可能なら MP4、難しい場合は TS）
@@ -1679,7 +1667,7 @@ function sendConversionProgress(message, sourceTabId) {
   broadcastToStudyTabs(message);
 }
 
-async function processM3U8Download(m3u8Url, title, sectionTitle, sourceTabId, requestId) {
+async function processOffscreenDownload(requestMessage, title, sectionTitle, sourceTabId, requestId) {
   await ensureOffscreenDocument();
 
   return new Promise((resolve) => {
@@ -1766,8 +1754,7 @@ async function processM3U8Download(m3u8Url, title, sectionTitle, sourceTabId, re
 
     // offscreen に変換リクエストを送信
     chrome.runtime.sendMessage({
-      type: MESSAGE_TYPES.convertM3u8,
-      m3u8Url: m3u8Url,
+      ...requestMessage,
       requestId,
     }).catch((err) => {
       sendConversionProgress({
@@ -1780,4 +1767,18 @@ async function processM3U8Download(m3u8Url, title, sectionTitle, sourceTabId, re
       finish({ success: false, message: `変換開始エラー: ${err.message}` });
     });
   });
+}
+
+function processM3U8Download(m3u8Url, title, sectionTitle, sourceTabId, requestId) {
+  return processOffscreenDownload({
+    type: MESSAGE_TYPES.convertM3u8,
+    m3u8Url,
+  }, title, sectionTitle, sourceTabId, requestId);
+}
+
+function processDirectMP4Download(mp4Url, title, sectionTitle, sourceTabId, requestId) {
+  return processOffscreenDownload({
+    type: MESSAGE_TYPES.prepareDirectMp4,
+    mp4Url,
+  }, title, sectionTitle, sourceTabId, requestId);
 }

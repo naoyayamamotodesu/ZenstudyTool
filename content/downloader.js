@@ -21,6 +21,7 @@ class ZenstudyToolDownloader {
     this.activeLessonFingerprint = '';
     this.activeLessonChangedAt = 0;
     this.chapterDataCache = new Map();
+    this.slideAvailabilityPromise = null;
 
     this.handlePotentialLessonSelection = this.handlePotentialLessonSelection.bind(this);
     document.addEventListener('click', this.handlePotentialLessonSelection, true);
@@ -117,6 +118,28 @@ class ZenstudyToolDownloader {
     return this.slideBtn;
   }
 
+  removeSlideDownloadButton() {
+    if (this.isSlideDownloading) return;
+
+    const button = this.getSlideDownloadButton();
+    if (button) button.remove();
+    this.slideBtn = null;
+  }
+
+  ensureSlideDownloadButton(buttonGroup) {
+    let button = this.getSlideDownloadButton();
+    if (button) return button;
+
+    this.slideBtn = document.createElement('button');
+    button = this.slideBtn;
+    button.id = ELEMENT_IDS.slideDownloadButton;
+    button.type = 'button';
+    button.className = CSS_CLASSES.slideDownloadButton;
+    button.addEventListener('click', () => this.handleSlideDownloadClick());
+    buttonGroup.appendChild(button);
+    return button;
+  }
+
   setActionButtonState(button, state, text) {
     if (!button) return;
     button.dataset.state = state;
@@ -161,6 +184,7 @@ class ZenstudyToolDownloader {
     this.videoInfo = null;
     this.resetDownloadState();
     this.resetSlideDownloadState();
+    this.removeSlideDownloadButton();
 
     if (this.resetTimerId) {
       clearTimeout(this.resetTimerId);
@@ -687,6 +711,35 @@ class ZenstudyToolDownloader {
     }, 2500);
   }
 
+  refreshSlideDownloadButton(buttonGroup) {
+    if (!this.slideDownloadEnabled || this.slideAvailabilityPromise || this.isSlideDownloading) return;
+
+    const lessonFingerprint = this.getCurrentLessonFingerprint();
+    this.slideAvailabilityPromise = this.collectSlideImages()
+      .then((images) => {
+        if (!this.slideDownloadEnabled || lessonFingerprint !== this.getCurrentLessonFingerprint()) return;
+
+        if (images.length === 0) {
+          this.removeSlideDownloadButton();
+          return;
+        }
+
+        this.ensureSlideDownloadButton(buttonGroup);
+        this.setSlideReadyState();
+      })
+      .catch((error) => {
+        console.warn('[ZenstudyTool] Slide availability check failed', error);
+        this.removeSlideDownloadButton();
+      })
+      .finally(() => {
+        const lessonChangedDuringCheck = lessonFingerprint !== this.getCurrentLessonFingerprint();
+        this.slideAvailabilityPromise = null;
+        if (lessonChangedDuringCheck && this.slideDownloadEnabled) {
+          this.checkAndShow();
+        }
+      });
+  }
+
   getTitle() {
     if (this.isUsableLessonTitle(this.lastSelectedTitle)) {
       return ZenstudyToolDownloaderUtils.normalizeTitleText(this.lastSelectedTitle);
@@ -758,8 +811,13 @@ class ZenstudyToolDownloader {
 
     const buttonGroup = this.ensureButtonGroup(buttonHost);
     let btn = this.getDownloadButton();
-    let slideBtn = this.getSlideDownloadButton();
-    const hasRequiredButtons = (!this.downloadEnabled || Boolean(btn)) && (!this.slideDownloadEnabled || Boolean(slideBtn));
+    if (this.slideDownloadEnabled) {
+      this.refreshSlideDownloadButton(buttonGroup);
+    } else {
+      this.removeSlideDownloadButton();
+    }
+
+    const hasRequiredButtons = !this.downloadEnabled || Boolean(btn);
     
     if (hasRequiredButtons) {
       const needsVideoButtonRefresh = this.downloadEnabled && (
@@ -770,10 +828,6 @@ class ZenstudyToolDownloader {
 
       if (needsVideoButtonRefresh) {
         this.setReadyState();
-      }
-
-      if (this.slideDownloadEnabled && lessonChanged && !this.isSlideDownloading) {
-        this.setSlideReadyState();
       }
 
       return;
@@ -792,21 +846,8 @@ class ZenstudyToolDownloader {
       buttonGroup.appendChild(btn);
     }
 
-    if (this.slideDownloadEnabled && !slideBtn) {
-      this.slideBtn = document.createElement('button');
-      slideBtn = this.slideBtn;
-      slideBtn.id = ELEMENT_IDS.slideDownloadButton;
-      slideBtn.type = 'button';
-      slideBtn.className = CSS_CLASSES.slideDownloadButton;
-      slideBtn.addEventListener('click', () => this.handleSlideDownloadClick());
-      buttonGroup.appendChild(slideBtn);
-    }
-
     if (this.downloadEnabled) {
       this.setReadyState();
-    }
-    if (this.slideDownloadEnabled && !this.isSlideDownloading) {
-      this.setSlideReadyState();
     }
   }
 

@@ -74,6 +74,7 @@
     conversionProgress: "ZST_CONVERSION_PROGRESS",
     conversionComplete: "ZST_CONVERSION_COMPLETE",
     convertM3u8: "ZST_CONVERT_M3U8",
+    prepareDirectMp4: "ZST_PREPARE_DIRECT_MP4",
     revokeBlobUrl: "ZST_REVOKE_BLOB_URL",
     slideDownloadProgress: "ZST_SLIDE_DOWNLOAD_PROGRESS",
   });

@@ -110,7 +110,7 @@ async function fetchText(url) {
 async function fetchBinary(url) {
   const response = await fetch(url);
   if (!response.ok) {
-    throw new Error(`セグメント取得失敗: ${response.status}`);
+    throw new Error(`メディア取得失敗: ${response.status}`);
   }
   const buffer = await response.arrayBuffer();
   return new Uint8Array(buffer);
@@ -410,6 +410,32 @@ async function downloadFromM3U8(m3u8Url, requestId) {
   }
 }
 
+async function prepareDirectMp4(mp4Url, requestId) {
+  try {
+    sendProgress({ phase: 'init', current: 0, total: 0, requestId });
+    const mp4Data = await fetchBinary(mp4Url);
+    const mp4Blob = new Blob([mp4Data], { type: 'video/mp4' });
+    const mp4BlobUrl = URL.createObjectURL(mp4Blob);
+    scheduleBlobRevoke(mp4BlobUrl);
+
+    chrome.runtime.sendMessage({
+      type: MESSAGE_TYPES.conversionComplete,
+      requestId,
+      success: true,
+      blobUrl: mp4BlobUrl,
+      outputType: 'mp4',
+    });
+  } catch (err) {
+    console.error('[ZenstudyTool Offscreen] Direct MP4 preparation error:', err);
+    chrome.runtime.sendMessage({
+      type: MESSAGE_TYPES.conversionComplete,
+      requestId,
+      success: false,
+      error: err.message,
+    });
+  }
+}
+
 // ============================================================
 // メッセージ受信
 // ============================================================
@@ -418,6 +444,11 @@ chrome.runtime.onMessage.addListener((message) => {
   if (message.type === MESSAGE_TYPES.convertM3u8) {
     // メッセージタイプ名は互換性のため維持
     enqueueConversion(() => downloadFromM3U8(message.m3u8Url, message.requestId));
+    return;
+  }
+
+  if (message.type === MESSAGE_TYPES.prepareDirectMp4) {
+    enqueueConversion(() => prepareDirectMp4(message.mp4Url, message.requestId));
     return;
   }
 
