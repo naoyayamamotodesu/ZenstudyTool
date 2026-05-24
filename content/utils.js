@@ -24,6 +24,7 @@ const CSS_CLASSES = {
   downloadButton: "__ZENSTUDYTOOL_downloadButton",
   batchDownloadButton: "__ZENSTUDYTOOL_batchDownloadButton",
   slideDownloadButton: "__ZENSTUDYTOOL_slideDownloadButton",
+  batchSlideDownloadButton: "__ZENSTUDYTOOL_batchSlideDownloadButton",
   actionRow: "__ZENSTUDYTOOL_actionRow",
   footerActionButton: "__ZENSTUDYTOOL_footerActionButton",
   fieldProofreadRow: "__ZENSTUDYTOOL_fieldProofreadRow",
@@ -40,6 +41,7 @@ const ELEMENT_IDS = {
   downloadButton: "__ZENSTUDYTOOL_download_btn",
   batchDownloadButton: "__ZENSTUDYTOOL_batch_download_btn",
   slideDownloadButton: "__ZENSTUDYTOOL_slide_download_btn",
+  batchSlideDownloadButton: "__ZENSTUDYTOOL_batch_slide_download_btn",
   proofreadButton: "__ZENSTUDYTOOL_proofread_btn",
 };
 
@@ -67,6 +69,13 @@ const SLIDE_DOWNLOAD_BUTTON_TEXT = {
   downloading: "保存中...",
   success: "保存開始",
   failed: "失敗",
+};
+
+const BATCH_SLIDE_DOWNLOAD_BUTTON_TEXT = {
+  ready: "単元画像一括保存",
+  stopping: "停止待機中...",
+  success: "単元画像保存完了",
+  failed: "一部失敗",
 };
 
 const PROOFREAD_BUTTON_TEXT = {
@@ -97,6 +106,12 @@ const AUTO_SKIP_DELAY_MS = 1500;
 
 /** 一括保存で教材切り替え後の動画URLを待つ最大時間 (ms) */
 const BATCH_VIDEO_READY_TIMEOUT_MS = 20 * 1000;
+
+/** 一括画像保存でスライド画像が新しい教材に切り替わるのを待つ最大時間 (ms) */
+const BATCH_SLIDE_READY_TIMEOUT_MS = 12 * 1000;
+
+/** 一括画像保存で補助テキスト iframe の再読み込みを待つ最大時間 (ms) */
+const BATCH_SLIDE_FRAME_READY_TIMEOUT_MS = 2500;
 
 /** 一括保存が教材状態を確認する間隔 (ms) */
 const BATCH_POLL_INTERVAL_MS = 250;

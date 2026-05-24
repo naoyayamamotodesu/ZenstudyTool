@@ -1315,7 +1315,7 @@ async function trackBrowserDownload({ url, filename, sourceTabId, requestId, out
     url,
     filename,
     saveAs: false,
-    conflictAction: 'uniquify',
+    conflictAction: 'overwrite',
   });
 
   const tracked = {
@@ -1576,7 +1576,7 @@ async function downloadSlideImages({ images, title, sectionTitle }, sourceTabId)
         url: image.url,
         filename: `${baseDirectory}/${fileStem}.${extension}`,
         saveAs: false,
-        conflictAction: 'uniquify',
+        conflictAction: 'overwrite',
       });
 
       sendConversionProgress({

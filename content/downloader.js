@@ -10,9 +10,11 @@ class ZenstudyToolDownloader {
     this.btn = null;
     this.batchBtn = null;
     this.slideBtn = null;
+    this.batchSlideBtn = null;
     this.resetTimerId = null;
     this.batchResetTimerId = null;
     this.slideResetTimerId = null;
+    this.batchSlideResetTimerId = null;
     this.waitingPollTimerId = null;
     this.activeConversionRequestId = null;
     this.isDownloading = false;
@@ -22,6 +24,7 @@ class ZenstudyToolDownloader {
     this.batchCurrentTargetKey = '';
     this.activeSlideDownloadRequestId = null;
     this.isSlideDownloading = false;
+    this.activeSlideDownloadCompletion = null;
     this.nextDownloadSequence = 0;
     this.activeDownloadSequence = 0;
     this.activeLessonFingerprint = '';
@@ -131,12 +134,27 @@ class ZenstudyToolDownloader {
     return this.batchBtn;
   }
 
+  getBatchSlideDownloadButton() {
+    if (this.batchSlideBtn && document.body.contains(this.batchSlideBtn)) return this.batchSlideBtn;
+    const existingBtn = document.getElementById(ELEMENT_IDS.batchSlideDownloadButton);
+    this.batchSlideBtn = existingBtn || null;
+    return this.batchSlideBtn;
+  }
+
   removeBatchDownloadButton() {
     if (this.isBatchDownloading) return;
 
     const button = this.getBatchDownloadButton();
     if (button) button.remove();
     this.batchBtn = null;
+  }
+
+  removeBatchSlideDownloadButton() {
+    if (this.isBatchDownloading) return;
+
+    const button = this.getBatchSlideDownloadButton();
+    if (button) button.remove();
+    this.batchSlideBtn = null;
   }
 
   ensureBatchDownloadButton(buttonGroup) {
@@ -149,6 +167,20 @@ class ZenstudyToolDownloader {
     button.type = 'button';
     button.className = CSS_CLASSES.batchDownloadButton;
     button.addEventListener('click', () => this.handleBatchDownloadClick());
+    buttonGroup.appendChild(button);
+    return button;
+  }
+
+  ensureBatchSlideDownloadButton(buttonGroup) {
+    let button = this.getBatchSlideDownloadButton();
+    if (button) return button;
+
+    this.batchSlideBtn = document.createElement('button');
+    button = this.batchSlideBtn;
+    button.id = ELEMENT_IDS.batchSlideDownloadButton;
+    button.type = 'button';
+    button.className = CSS_CLASSES.batchSlideDownloadButton;
+    button.addEventListener('click', () => this.handleBatchSlideDownloadClick());
     buttonGroup.appendChild(button);
     return button;
   }
@@ -210,6 +242,30 @@ class ZenstudyToolDownloader {
     return startedAt || Date.now() - 15000;
   }
 
+  getDocumentStartedAt(doc) {
+    const candidates = [];
+
+    try {
+      const performance = doc?.defaultView?.performance;
+      candidates.push(performance?.timeOrigin);
+      candidates.push(performance?.timing?.navigationStart);
+    } catch (_) {
+      // Cross-origin or detached frames fall back below.
+    }
+
+    return candidates.find((value) => Number.isFinite(value) && value > 0) || 0;
+  }
+
+  isDocumentFreshForLesson(doc, minStartedAt = 0) {
+    if (!doc || doc.readyState === 'loading') return false;
+    if (!minStartedAt) return true;
+
+    const startedAt = this.getDocumentStartedAt(doc);
+    if (!startedAt) return true;
+
+    return startedAt >= minStartedAt - 1000;
+  }
+
   syncLessonContext() {
     const nextFingerprint = this.getCurrentLessonFingerprint();
     if (nextFingerprint === this.activeLessonFingerprint) return false;
@@ -219,12 +275,18 @@ class ZenstudyToolDownloader {
       this.resolveActiveDownloadCompletion(false, '保存中に教材が切り替わりました');
     }
 
+    if (this.isBatchDownloading && this.activeSlideDownloadCompletion) {
+      this.requestBatchStop();
+      this.resolveActiveSlideDownloadCompletion(false, '保存中に教材が切り替わりました');
+    }
+
     this.activeLessonFingerprint = nextFingerprint;
     this.activeLessonChangedAt = nextFingerprint ? this.getCurrentLessonStartedAt() : 0;
     this.videoInfo = null;
     this.resetDownloadState();
     this.resetSlideDownloadState();
     this.removeSlideDownloadButton();
+    this.removeBatchSlideDownloadButton();
 
     if (this.resetTimerId) {
       clearTimeout(this.resetTimerId);
@@ -521,40 +583,51 @@ class ZenstudyToolDownloader {
     return this.getTitle();
   }
 
-  waitForIframeDocument(iframe, timeoutMs = 4000) {
+  waitForIframeDocument(iframe, timeoutMs = 4000, { minStartedAt = 0 } = {}) {
     const existingDoc = this.getIframeDocument(iframe);
-    if (existingDoc && existingDoc.readyState !== 'loading') {
+    if (this.isDocumentFreshForLesson(existingDoc, minStartedAt)) {
       return Promise.resolve(existingDoc);
     }
 
     return new Promise((resolve) => {
       let settled = false;
+      let timeoutId = null;
+      let pollId = null;
 
       const finish = (doc) => {
         if (settled) return;
         settled = true;
         if (timeoutId) clearTimeout(timeoutId);
+        if (pollId) clearInterval(pollId);
+        iframe.removeEventListener('load', check);
         resolve(doc || null);
       };
 
-      const onLoad = () => {
-        finish(this.getIframeDocument(iframe));
+      const check = () => {
+        const doc = this.getIframeDocument(iframe);
+        if (this.isDocumentFreshForLesson(doc, minStartedAt)) {
+          finish(doc);
+        }
       };
 
-      const timeoutId = setTimeout(() => {
-        iframe.removeEventListener('load', onLoad);
-        finish(this.getIframeDocument(iframe));
+      timeoutId = setTimeout(() => {
+        finish(null);
       }, timeoutMs);
 
-      iframe.addEventListener('load', onLoad, { once: true });
+      pollId = setInterval(check, BATCH_POLL_INTERVAL_MS);
+      iframe.addEventListener('load', check);
+      check();
     });
   }
 
-  async collectNestedFrameDocuments(frames, seenDocs = new Set()) {
+  async collectNestedFrameDocuments(frames, seenDocs = new Set(), options = {}) {
     const docs = [];
+    const frameTimeoutMs = options.frameTimeoutMs || 4000;
 
     for (const frame of frames) {
-      const doc = await this.waitForIframeDocument(frame);
+      const doc = await this.waitForIframeDocument(frame, frameTimeoutMs, {
+        minStartedAt: options.minStartedAt || 0,
+      });
       if (!doc || seenDocs.has(doc)) continue;
 
       seenDocs.add(doc);
@@ -562,16 +635,16 @@ class ZenstudyToolDownloader {
 
       const childFrames = Array.from(doc.querySelectorAll('iframe'));
       if (childFrames.length > 0) {
-        docs.push(...await this.collectNestedFrameDocuments(childFrames, seenDocs));
+        docs.push(...await this.collectNestedFrameDocuments(childFrames, seenDocs, options));
       }
     }
 
     return docs;
   }
 
-  async getSlideDocuments() {
+  async getSlideDocuments(options = {}) {
     const movieDoc = this.getIframeDocument(this.getModalIframe());
-    if (!movieDoc) return [];
+    if (!this.isDocumentFreshForLesson(movieDoc, options.minStartedAt || 0)) return [];
 
     const referenceFrames = Array.from(
       movieDoc.querySelectorAll('iframe[src*="/references/"], iframe[aria-label*="補助テキスト"], iframe[aria-label*="スライド"]')
@@ -580,11 +653,11 @@ class ZenstudyToolDownloader {
     if (referenceFrames.length === 0) {
       const fallbackFrames = Array.from(movieDoc.querySelectorAll('iframe'));
       return fallbackFrames.length > 0
-        ? this.collectNestedFrameDocuments(fallbackFrames)
+        ? this.collectNestedFrameDocuments(fallbackFrames, new Set(), options)
         : [movieDoc];
     }
 
-    return this.collectNestedFrameDocuments(referenceFrames);
+    return this.collectNestedFrameDocuments(referenceFrames, new Set(), options);
   }
 
   collectSlideImagesFromDocument(doc, images, seenUrls) {
@@ -636,8 +709,8 @@ class ZenstudyToolDownloader {
     }
   }
 
-  async collectSlideImages() {
-    const docs = await this.getSlideDocuments();
+  async collectSlideImages(options = {}) {
+    const docs = await this.getSlideDocuments(options);
     const images = [];
     const seenUrls = new Set();
 
@@ -646,6 +719,60 @@ class ZenstudyToolDownloader {
     }
 
     return images;
+  }
+
+  getSlideImagesSignature(images) {
+    return images
+      .map((image) => image.url)
+      .sort()
+      .join('\n');
+  }
+
+  wait(ms) {
+    return new Promise((resolve) => {
+      setTimeout(resolve, ms);
+    });
+  }
+
+  async waitForSlideImagesReady(lessonFingerprint, minStartedAt) {
+    const deadline = Date.now() + BATCH_SLIDE_READY_TIMEOUT_MS;
+    let lastSignature = '';
+    let stableCount = 0;
+    let lastImages = [];
+
+    while (Date.now() <= deadline) {
+      if (this.batchStopRequested || lessonFingerprint !== this.getCurrentLessonFingerprint()) {
+        return null;
+      }
+
+      const images = await this.collectSlideImages({
+        minStartedAt,
+        frameTimeoutMs: BATCH_SLIDE_FRAME_READY_TIMEOUT_MS,
+      });
+      const signature = this.getSlideImagesSignature(images);
+
+      if (signature) {
+        lastImages = images;
+        if (signature === lastSignature) {
+          stableCount += 1;
+        } else {
+          lastSignature = signature;
+          stableCount = 1;
+        }
+
+        if (stableCount >= 2) {
+          return images;
+        }
+      } else {
+        lastImages = [];
+        lastSignature = '';
+        stableCount = 0;
+      }
+
+      await this.wait(BATCH_POLL_INTERVAL_MS);
+    }
+
+    return lastImages;
   }
 
   getVideoLessonItems() {
@@ -759,6 +886,14 @@ class ZenstudyToolDownloader {
     pending.resolve({ success, message });
   }
 
+  resolveActiveSlideDownloadCompletion(success, message = '', details = {}) {
+    if (!this.activeSlideDownloadCompletion) return;
+
+    const pending = this.activeSlideDownloadCompletion;
+    this.activeSlideDownloadCompletion = null;
+    pending.resolve({ success, message, ...details });
+  }
+
   setButtonState(state, text) {
     this.setActionButtonState(this.getDownloadButton(), state, text);
   }
@@ -769,6 +904,10 @@ class ZenstudyToolDownloader {
 
   setSlideButtonState(state, text) {
     this.setActionButtonState(this.getSlideDownloadButton(), state, text);
+  }
+
+  setBatchSlideButtonState(state, text) {
+    this.setActionButtonState(this.getBatchSlideDownloadButton(), state, text);
   }
 
   setBatchReadyState() {
@@ -800,6 +939,38 @@ class ZenstudyToolDownloader {
     if (this.batchResetTimerId) clearTimeout(this.batchResetTimerId);
     this.batchResetTimerId = setTimeout(() => {
       this.setBatchReadyState();
+    }, 3500);
+  }
+
+  setBatchSlideReadyState() {
+    const btn = this.getBatchSlideDownloadButton();
+    if (!btn || this.isBatchDownloading) return;
+
+    this.setBatchSlideButtonState('ready', BATCH_SLIDE_DOWNLOAD_BUTTON_TEXT.ready);
+    btn.disabled = false;
+    btn.title = '';
+  }
+
+  setBatchSlideBusyState(text) {
+    const btn = this.getBatchSlideDownloadButton();
+    if (!btn) return;
+
+    this.setBatchSlideButtonState('loading', text);
+    btn.disabled = false;
+    btn.title = 'クリックで次の教材への移動を停止';
+  }
+
+  setBatchSlideResultState(state, text) {
+    const btn = this.getBatchSlideDownloadButton();
+    if (!btn) return;
+
+    this.setBatchSlideButtonState(state, text);
+    btn.disabled = false;
+    btn.title = '';
+
+    if (this.batchSlideResetTimerId) clearTimeout(this.batchSlideResetTimerId);
+    this.batchSlideResetTimerId = setTimeout(() => {
+      this.setBatchSlideReadyState();
     }, 3500);
   }
 
@@ -894,25 +1065,47 @@ class ZenstudyToolDownloader {
     const btn = this.getSlideDownloadButton();
     if (!btn) return;
 
+    if (this.slideResetTimerId) {
+      clearTimeout(this.slideResetTimerId);
+      this.slideResetTimerId = null;
+    }
     this.setSlideButtonState('loading', text);
     btn.disabled = true;
   }
 
-  setSlideResultState(state, text) {
+  setSlideResultState(state, text, autoReset = true) {
     const btn = this.getSlideDownloadButton();
     if (!btn) return;
 
     this.setSlideButtonState(state, text);
-    btn.disabled = state !== 'error';
+    btn.disabled = this.isBatchDownloading || state !== 'error';
 
     if (this.slideResetTimerId) clearTimeout(this.slideResetTimerId);
+    if (!autoReset) {
+      this.slideResetTimerId = null;
+      return;
+    }
+
     this.slideResetTimerId = setTimeout(() => {
       this.setSlideReadyState();
     }, 2500);
   }
 
   refreshSlideDownloadButton(buttonGroup) {
-    if (!this.slideDownloadEnabled || this.slideAvailabilityPromise || this.isSlideDownloading) return;
+    if (!this.slideDownloadEnabled) {
+      this.removeSlideDownloadButton();
+      this.removeBatchSlideDownloadButton();
+      return;
+    }
+
+    if (this.getVideoLessonTargets().length > 0) {
+      this.ensureBatchSlideDownloadButton(buttonGroup);
+      this.setBatchSlideReadyState();
+    } else {
+      this.removeBatchSlideDownloadButton();
+    }
+
+    if (this.slideAvailabilityPromise || this.isSlideDownloading) return;
 
     const lessonFingerprint = this.getCurrentLessonFingerprint();
     this.slideAvailabilityPromise = this.collectSlideImages()
@@ -1031,6 +1224,7 @@ class ZenstudyToolDownloader {
       this.refreshSlideDownloadButton(buttonGroup);
     } else {
       this.removeSlideDownloadButton();
+      this.removeBatchSlideDownloadButton();
     }
 
     const hasRequiredButtons = !this.downloadEnabled || Boolean(btn);
@@ -1072,7 +1266,7 @@ class ZenstudyToolDownloader {
   async startDownload({ fromBatch = false } = {}) {
     if (!this.downloadEnabled) return false;
     if (this.isBatchDownloading && !fromBatch) return false;
-    if (this.isDownloading || !this.hasCurrentVideoInfo()) return false;
+    if (this.isDownloading || this.isSlideDownloading || !this.hasCurrentVideoInfo()) return false;
 
     const btn = this.getDownloadButton();
     if (btn && btn.disabled && !fromBatch) return false;
@@ -1153,6 +1347,7 @@ class ZenstudyToolDownloader {
     if (!this.isBatchDownloading) return;
     this.batchStopRequested = true;
     this.setBatchBusyState(BATCH_DOWNLOAD_BUTTON_TEXT.stopping);
+    this.setBatchSlideBusyState(BATCH_SLIDE_DOWNLOAD_BUTTON_TEXT.stopping);
   }
 
   async startBatchDownload() {
@@ -1169,6 +1364,7 @@ class ZenstudyToolDownloader {
     this.batchStopRequested = false;
     ZENSTUDYTOOL_AUTOMATION_STATE.batchDownloadActive = true;
     this.batchCurrentTargetKey = await this.resolveInitialBatchTargetKey(targets);
+    this.setBatchSlideBusyState('動画保存中...');
 
     let completedCount = 0;
     let successCount = 0;
@@ -1210,6 +1406,8 @@ class ZenstudyToolDownloader {
       this.batchStopRequested = false;
       this.batchCurrentTargetKey = '';
       this.setReadyState();
+      this.setSlideReadyState();
+      this.setBatchSlideReadyState();
     }
 
     if (completedCount === 0) {
@@ -1244,39 +1442,72 @@ class ZenstudyToolDownloader {
     void this.startBatchDownload();
   }
 
-  async startSlideDownload() {
+  async startSlideDownload({ fromBatch = false, allowEmpty = false } = {}) {
     if (!this.slideDownloadEnabled) return false;
-    if (this.isBatchDownloading) return false;
+    if (this.isBatchDownloading && !fromBatch) return false;
     if (this.isSlideDownloading || !this.hasVideoModalOpen()) return false;
 
     const btn = this.getSlideDownloadButton();
-    if (btn && btn.disabled) return false;
+    if (btn && btn.disabled && !fromBatch) return false;
 
     const lessonFingerprint = this.getCurrentLessonFingerprint();
+    const lessonStartedAt = this.activeLessonChangedAt || this.getCurrentLessonStartedAt();
     this.isSlideDownloading = true;
     this.activeSlideDownloadRequestId = null;
+    const completionPromise = fromBatch
+      ? new Promise((resolve) => {
+        this.activeSlideDownloadCompletion = { resolve };
+      })
+      : null;
+
+    const fail = (message) => {
+      this.resolveActiveSlideDownloadCompletion(false, message);
+      this.resetSlideDownloadState();
+      this.setSlideResultState('error', SLIDE_DOWNLOAD_BUTTON_TEXT.failed, !fromBatch);
+      if (!fromBatch) {
+        alert(message);
+      }
+      return false;
+    };
 
     try {
       this.title = await this.resolveTitle();
       this.sectionTitle = this.getSectionTitle();
 
       if (this.getCurrentLessonFingerprint() !== lessonFingerprint) {
+        this.resolveActiveSlideDownloadCompletion(false, '教材が切り替わりました');
         this.resetSlideDownloadState();
         return false;
       }
 
       this.setSlideBusyState(SLIDE_DOWNLOAD_BUTTON_TEXT.preparing);
-      const images = await this.collectSlideImages();
+      const images = fromBatch
+        ? await this.waitForSlideImagesReady(lessonFingerprint, lessonStartedAt)
+        : await this.collectSlideImages();
+
+      if (!images) {
+        this.resolveActiveSlideDownloadCompletion(false, '教材が切り替わりました');
+        this.resetSlideDownloadState();
+        return false;
+      }
 
       if (this.getCurrentLessonFingerprint() !== lessonFingerprint) {
+        this.resolveActiveSlideDownloadCompletion(false, '教材が切り替わりました');
         this.resetSlideDownloadState();
         return false;
       }
 
       if (images.length === 0) {
+        this.resolveActiveSlideDownloadCompletion(true, '', { skipped: true, count: 0 });
         this.resetSlideDownloadState();
-        this.setSlideResultState('error', SLIDE_DOWNLOAD_BUTTON_TEXT.failed);
-        alert('スライド画像が見つかりませんでした。補助テキストが読み込まれてからもう一度お試しください。');
+        if (allowEmpty) {
+          this.setSlideReadyState();
+          return completionPromise || { success: true, skipped: true, count: 0 };
+        }
+        this.setSlideResultState('error', SLIDE_DOWNLOAD_BUTTON_TEXT.failed, !fromBatch);
+        if (!fromBatch) {
+          alert('スライド画像が見つかりませんでした。補助テキストが読み込まれてからもう一度お試しください。');
+        }
         return false;
       }
 
@@ -1286,17 +1517,17 @@ class ZenstudyToolDownloader {
         title: this.title,
         sectionTitle: this.sectionTitle,
       }, (response, error) => {
+        if (!this.isSlideDownloading || this.getCurrentLessonFingerprint() !== lessonFingerprint) {
+          return;
+        }
+
         if (error) {
-          this.resetSlideDownloadState();
-          this.setSlideResultState('error', SLIDE_DOWNLOAD_BUTTON_TEXT.failed);
-          alert('スライド保存に失敗しました: ' + (error.message || '不明なエラー'));
+          fail('スライド保存に失敗しました: ' + (error.message || '不明なエラー'));
           return;
         }
 
         if (!response || !response.success) {
-          this.resetSlideDownloadState();
-          this.setSlideResultState('error', SLIDE_DOWNLOAD_BUTTON_TEXT.failed);
-          alert('スライド保存に失敗しました: ' + (response?.message || '不明なエラー'));
+          fail('スライド保存に失敗しました: ' + (response?.message || '不明なエラー'));
           return;
         }
 
@@ -1305,17 +1536,106 @@ class ZenstudyToolDownloader {
         }
       });
     } catch (error) {
-      this.resetSlideDownloadState();
-      this.setSlideResultState('error', SLIDE_DOWNLOAD_BUTTON_TEXT.failed);
-      alert(`スライド保存の準備に失敗しました: ${error.message || '不明なエラー'}`);
+      fail(`スライド保存の準備に失敗しました: ${error.message || '不明なエラー'}`);
       return false;
     }
 
-    return true;
+    return completionPromise || true;
   }
 
   handleSlideDownloadClick() {
     void this.startSlideDownload();
+  }
+
+  async startBatchSlideDownload() {
+    if (!this.slideDownloadEnabled || this.isBatchDownloading) return false;
+    if (this.isDownloading || this.isSlideDownloading) return false;
+
+    const targets = this.getVideoLessonTargets();
+    if (targets.length === 0) {
+      this.setBatchSlideResultState('error', BATCH_SLIDE_DOWNLOAD_BUTTON_TEXT.failed);
+      return false;
+    }
+
+    this.isBatchDownloading = true;
+    this.batchStopRequested = false;
+    ZENSTUDYTOOL_AUTOMATION_STATE.batchDownloadActive = true;
+    this.batchCurrentTargetKey = await this.resolveInitialBatchTargetKey(targets);
+    this.setBatchBusyState('画像保存中...');
+
+    let completedCount = 0;
+    let savedLessonCount = 0;
+    let savedImageCount = 0;
+    let failureMessage = '';
+
+    try {
+      for (const [targetIndex, target] of targets.entries()) {
+        if (this.batchStopRequested) break;
+
+        this.setBatchSlideBusyState(`${targetIndex + 1}/${targets.length} 画像保存中`);
+        const selected = await this.selectBatchLesson(target);
+        if (!selected || this.batchStopRequested) {
+          if (!this.batchStopRequested) {
+            failureMessage = '教材の切り替えを確認できませんでした';
+          }
+          break;
+        }
+
+        const result = await this.startSlideDownload({ fromBatch: true, allowEmpty: true });
+        if (!result?.success) {
+          failureMessage = result?.message || '画像保存に失敗しました';
+          break;
+        }
+
+        completedCount += 1;
+        if (!result.skipped && result.count > 0) {
+          savedLessonCount += 1;
+          savedImageCount += result.count;
+        }
+      }
+    } finally {
+      this.isBatchDownloading = false;
+      ZENSTUDYTOOL_AUTOMATION_STATE.batchDownloadActive = false;
+      this.batchStopRequested = false;
+      this.batchCurrentTargetKey = '';
+      this.setReadyState();
+      this.setSlideReadyState();
+      this.setBatchReadyState();
+    }
+
+    if (completedCount === 0) {
+      if (failureMessage) {
+        this.setBatchSlideResultState('error', BATCH_SLIDE_DOWNLOAD_BUTTON_TEXT.failed);
+      } else {
+        this.setBatchSlideReadyState();
+      }
+      return false;
+    }
+
+    if (failureMessage) {
+      this.setBatchSlideResultState('error', `${savedImageCount}枚保存`);
+      return savedImageCount > 0;
+    }
+
+    if (completedCount !== targets.length) {
+      this.setBatchSlideResultState('ready', `${savedImageCount}枚保存で停止`);
+      return savedImageCount > 0;
+    }
+
+    this.setBatchSlideResultState(
+      'success',
+      `${BATCH_SLIDE_DOWNLOAD_BUTTON_TEXT.success} ${savedImageCount}枚/${savedLessonCount}教材`
+    );
+    return true;
+  }
+
+  handleBatchSlideDownloadClick() {
+    if (this.isBatchDownloading) {
+      this.requestBatchStop();
+      return;
+    }
+
+    void this.startBatchSlideDownload();
   }
 
   removeButton() {
@@ -1325,6 +1645,7 @@ class ZenstudyToolDownloader {
       this.requestBatchStop();
     }
     this.resolveActiveDownloadCompletion(false, '教材画面が閉じられました');
+    this.resolveActiveSlideDownloadCompletion(false, '教材画面が閉じられました');
     this.resetDownloadState();
     this.resetSlideDownloadState();
 
@@ -1343,12 +1664,18 @@ class ZenstudyToolDownloader {
       this.batchResetTimerId = null;
     }
 
+    if (this.batchSlideResetTimerId) {
+      clearTimeout(this.batchSlideResetTimerId);
+      this.batchSlideResetTimerId = null;
+    }
+
     const existingGroup = document.getElementById(ELEMENT_IDS.downloadButtonGroup);
     if (existingGroup) existingGroup.remove();
     this.buttonGroup = null;
     this.btn = null;
     this.batchBtn = null;
     this.slideBtn = null;
+    this.batchSlideBtn = null;
   }
 
   updateProgress(msg) {
@@ -1391,7 +1718,7 @@ class ZenstudyToolDownloader {
   }
 
   updateSlideProgress(msg) {
-    if (!this.getSlideDownloadButton() || !this.isSlideDownloading) return;
+    if (!this.isSlideDownloading) return;
 
     if (msg && msg.requestId) {
       if (this.activeSlideDownloadRequestId && this.activeSlideDownloadRequestId !== msg.requestId) {
@@ -1417,14 +1744,19 @@ class ZenstudyToolDownloader {
     }
 
     if (msg.phase === 'done') {
+      this.resolveActiveSlideDownloadCompletion(true, '', {
+        skipped: false,
+        count: Number.isFinite(msg.total) ? msg.total : 0,
+      });
       this.resetSlideDownloadState();
-      this.setSlideResultState('success', SLIDE_DOWNLOAD_BUTTON_TEXT.success);
+      this.setSlideResultState('success', SLIDE_DOWNLOAD_BUTTON_TEXT.success, !this.isBatchDownloading);
       return;
     }
 
     if (msg.phase === 'error') {
+      this.resolveActiveSlideDownloadCompletion(false, msg.error || 'スライド保存に失敗しました');
       this.resetSlideDownloadState();
-      this.setSlideResultState('error', SLIDE_DOWNLOAD_BUTTON_TEXT.failed);
+      this.setSlideResultState('error', SLIDE_DOWNLOAD_BUTTON_TEXT.failed, !this.isBatchDownloading);
     }
   }
 }
