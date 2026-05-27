@@ -52,7 +52,7 @@ class ZenstudyToolAutoSkip {
    * 教材リストを上から見て、最初の「緑じゃない行」をクリックする。
    */
   checkAndSkip() {
-    if (this.isSkipping || ZENSTUDYTOOL_AUTOMATION_STATE.batchDownloadActive) return;
+    if (this.isSkipping || isBatchDownloadActive()) return;
 
     // 教材リスト・レポートリストをDOM順にまとめて取得
     const items = Array.from(
@@ -75,7 +75,7 @@ class ZenstudyToolAutoSkip {
 
         this.skipTimerId = setTimeout(() => {
           this.skipTimerId = null;
-          if (!this.enabled || ZENSTUDYTOOL_AUTOMATION_STATE.batchDownloadActive) {
+          if (!this.enabled || isBatchDownloadActive()) {
             this.isSkipping = false;
             return;
           }

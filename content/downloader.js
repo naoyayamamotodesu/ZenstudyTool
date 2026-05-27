@@ -1362,15 +1362,16 @@ class ZenstudyToolDownloader {
 
     this.isBatchDownloading = true;
     this.batchStopRequested = false;
-    ZENSTUDYTOOL_AUTOMATION_STATE.batchDownloadActive = true;
-    this.batchCurrentTargetKey = await this.resolveInitialBatchTargetKey(targets);
-    this.setBatchSlideBusyState('動画保存中...');
+    setBatchDownloadActive(true);
 
     let completedCount = 0;
     let successCount = 0;
     let failureMessage = '';
 
     try {
+      this.batchCurrentTargetKey = await this.resolveInitialBatchTargetKey(targets);
+      this.setBatchSlideBusyState('動画保存中...');
+
       for (const [targetIndex, target] of targets.entries()) {
         if (this.batchStopRequested) break;
 
@@ -1402,7 +1403,7 @@ class ZenstudyToolDownloader {
       }
     } finally {
       this.isBatchDownloading = false;
-      ZENSTUDYTOOL_AUTOMATION_STATE.batchDownloadActive = false;
+      setBatchDownloadActive(false);
       this.batchStopRequested = false;
       this.batchCurrentTargetKey = '';
       this.setReadyState();
@@ -1559,9 +1560,7 @@ class ZenstudyToolDownloader {
 
     this.isBatchDownloading = true;
     this.batchStopRequested = false;
-    ZENSTUDYTOOL_AUTOMATION_STATE.batchDownloadActive = true;
-    this.batchCurrentTargetKey = await this.resolveInitialBatchTargetKey(targets);
-    this.setBatchBusyState('画像保存中...');
+    setBatchDownloadActive(true);
 
     let completedCount = 0;
     let savedLessonCount = 0;
@@ -1569,6 +1568,9 @@ class ZenstudyToolDownloader {
     let failureMessage = '';
 
     try {
+      this.batchCurrentTargetKey = await this.resolveInitialBatchTargetKey(targets);
+      this.setBatchBusyState('画像保存中...');
+
       for (const [targetIndex, target] of targets.entries()) {
         if (this.batchStopRequested) break;
 
@@ -1595,7 +1597,7 @@ class ZenstudyToolDownloader {
       }
     } finally {
       this.isBatchDownloading = false;
-      ZENSTUDYTOOL_AUTOMATION_STATE.batchDownloadActive = false;
+      setBatchDownloadActive(false);
       this.batchStopRequested = false;
       this.batchCurrentTargetKey = '';
       this.setReadyState();

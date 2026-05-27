@@ -118,8 +118,16 @@ const BATCH_POLL_INTERVAL_MS = 250;
 
 const ZENSTUDYTOOL_AUTOMATION_STATE = globalThis.__ZENSTUDYTOOL_automationState || {
   batchDownloadActive: false,
+  batchDownloadStartedAt: 0,
 };
 globalThis.__ZENSTUDYTOOL_automationState = ZENSTUDYTOOL_AUTOMATION_STATE;
+
+const setBatchDownloadActive = (active) => {
+  ZENSTUDYTOOL_AUTOMATION_STATE.batchDownloadActive = Boolean(active);
+  ZENSTUDYTOOL_AUTOMATION_STATE.batchDownloadStartedAt = active ? Date.now() : 0;
+};
+
+const isBatchDownloadActive = () => Boolean(ZENSTUDYTOOL_AUTOMATION_STATE.batchDownloadActive);
 
 /** ボタンのaria-label */
 const ARIA_LABELS = {
