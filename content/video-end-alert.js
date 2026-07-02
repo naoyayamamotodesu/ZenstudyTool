@@ -5,6 +5,9 @@ class ZenstudyToolVideoEndAlert {
     this.lastAlertedAtByVideo = new WeakMap();
     this.toastTimerId = null;
     this.observer = null;
+    this.audioContext = null;
+    this.audioUnlocked = false;
+    this.unlockAudio = this.unlockAudio.bind(this);
 
     safeStorageGet(
       { [STORAGE_KEYS.videoEndAlertEnabled]: false },
@@ -25,6 +28,7 @@ class ZenstudyToolVideoEndAlert {
   }
 
   start() {
+    this.addAudioUnlockListeners();
     this.scanVideos();
     if (this.observer) return;
     this.observer = createDebouncedObserver(() => this.scanVideos(), 250, true);
@@ -35,6 +39,7 @@ class ZenstudyToolVideoEndAlert {
       this.observer.disconnect();
       this.observer = null;
     }
+    this.removeAudioUnlockListeners();
     this.removeToast();
   }
 
@@ -66,9 +71,89 @@ class ZenstudyToolVideoEndAlert {
       : "動画が終了しました";
 
     this.showToast(message);
+    this.playAlertSound();
     window.setTimeout(() => {
       if (this.enabled) window.alert(message);
-    }, 0);
+    }, 1900);
+  }
+
+  addAudioUnlockListeners() {
+    if (this.audioUnlocked) return;
+    document.addEventListener("pointerdown", this.unlockAudio, true);
+    document.addEventListener("keydown", this.unlockAudio, true);
+  }
+
+  removeAudioUnlockListeners() {
+    document.removeEventListener("pointerdown", this.unlockAudio, true);
+    document.removeEventListener("keydown", this.unlockAudio, true);
+  }
+
+  unlockAudio() {
+    const audioContext = this.getAudioContext();
+    if (!audioContext) return;
+
+    if (audioContext.state === "suspended") {
+      audioContext.resume().catch(() => {});
+    }
+    this.audioUnlocked = true;
+    this.removeAudioUnlockListeners();
+  }
+
+  getAudioContext() {
+    const AudioContext = window.AudioContext || window.webkitAudioContext;
+    if (!AudioContext) return null;
+
+    if (!this.audioContext || this.audioContext.state === "closed") {
+      this.audioContext = new AudioContext();
+    }
+    return this.audioContext;
+  }
+
+  playAlertSound() {
+    try {
+      const audioContext = this.getAudioContext();
+      if (!audioContext) return;
+      if (audioContext.state === "suspended") {
+        audioContext.resume().catch(() => {});
+      }
+
+      const masterGain = audioContext.createGain();
+      masterGain.gain.setValueAtTime(0.0001, audioContext.currentTime);
+      masterGain.gain.exponentialRampToValueAtTime(0.28, audioContext.currentTime + 0.03);
+      masterGain.gain.exponentialRampToValueAtTime(0.0001, audioContext.currentTime + 1.85);
+      masterGain.connect(audioContext.destination);
+
+      const notes = [
+        { frequency: 784, start: 0.00, duration: 0.34 },
+        { frequency: 988, start: 0.38, duration: 0.34 },
+        { frequency: 1175, start: 0.76, duration: 0.52 },
+      ];
+
+      for (const note of notes) {
+        this.playTone(audioContext, masterGain, note);
+      }
+
+    } catch (_) {
+      // Audio may be blocked by the browser; the visual alert still runs.
+    }
+  }
+
+  playTone(audioContext, destination, { frequency, start, duration }) {
+    const startAt = audioContext.currentTime + start;
+    const endAt = startAt + duration;
+    const oscillator = audioContext.createOscillator();
+    const toneGain = audioContext.createGain();
+
+    oscillator.type = "sine";
+    oscillator.frequency.setValueAtTime(frequency, startAt);
+    toneGain.gain.setValueAtTime(0.0001, startAt);
+    toneGain.gain.exponentialRampToValueAtTime(0.9, startAt + 0.03);
+    toneGain.gain.exponentialRampToValueAtTime(0.0001, endAt);
+
+    oscillator.connect(toneGain);
+    toneGain.connect(destination);
+    oscillator.start(startAt);
+    oscillator.stop(endAt + 0.03);
   }
 
   getLessonTitle() {
