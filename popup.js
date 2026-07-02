@@ -12,6 +12,7 @@ document.addEventListener('DOMContentLoaded', () => {
   const toggleDailyTarget = document.getElementById('toggleDailyTarget');
   const toggleAutoSkip = document.getElementById('toggleAutoSkip');
   const toggleAlwaysFocus = document.getElementById('toggleAlwaysFocus');
+  const toggleVideoEndAlert = document.getElementById('toggleVideoEndAlert');
   const toggleCopyText = document.getElementById('toggleCopyText');
   const toggleDownload = document.getElementById('toggleDownload');
   const toggleSlideDownload = document.getElementById('toggleSlideDownload');
@@ -37,6 +38,7 @@ document.addEventListener('DOMContentLoaded', () => {
     [STORAGE_KEYS.showDailyTarget]: true,
     [STORAGE_KEYS.autoSkipEnabled]: false,
     [STORAGE_KEYS.alwaysFocusEnabled]: true,
+    [STORAGE_KEYS.videoEndAlertEnabled]: false,
     [STORAGE_KEYS.copyTextEnabled]: true,
     [STORAGE_KEYS.downloadEnabled]: true,
     [STORAGE_KEYS.slideDownloadEnabled]: true,
@@ -237,6 +239,7 @@ document.addEventListener('DOMContentLoaded', () => {
       if (toggleDailyTarget) toggleDailyTarget.checked = result[STORAGE_KEYS.showDailyTarget];
       if (toggleAutoSkip) toggleAutoSkip.checked = result[STORAGE_KEYS.autoSkipEnabled];
       if (toggleAlwaysFocus) toggleAlwaysFocus.checked = result[STORAGE_KEYS.alwaysFocusEnabled];
+      if (toggleVideoEndAlert) toggleVideoEndAlert.checked = result[STORAGE_KEYS.videoEndAlertEnabled];
       if (toggleCopyText) toggleCopyText.checked = result[STORAGE_KEYS.copyTextEnabled];
       if (toggleDownload) toggleDownload.checked = result[STORAGE_KEYS.downloadEnabled];
       if (toggleSlideDownload) toggleSlideDownload.checked = result[STORAGE_KEYS.slideDownloadEnabled];
@@ -278,6 +281,12 @@ document.addEventListener('DOMContentLoaded', () => {
   if (toggleAlwaysFocus) {
     toggleAlwaysFocus.addEventListener('change', () => {
       saveSetting(STORAGE_KEYS.alwaysFocusEnabled, toggleAlwaysFocus.checked);
+    });
+  }
+
+  if (toggleVideoEndAlert) {
+    toggleVideoEndAlert.addEventListener('change', () => {
+      saveSetting(STORAGE_KEYS.videoEndAlertEnabled, toggleVideoEndAlert.checked);
     });
   }
 

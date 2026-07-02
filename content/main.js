@@ -6,6 +6,7 @@ if (window.top === window.self) {
   const timeLogic = new ZenstudyToolTimeLogic();
   const ui = new ZenstudyToolUI(timeLogic);
   const autoSkip = new ZenstudyToolAutoSkip();
+  const videoEndAlert = new ZenstudyToolVideoEndAlert();
   const copyText = new ZenstudyToolCopyText();
   const proofreader = new ZenstudyToolProofreader();
   const answerAssist = new ZenstudyToolAnswerAssist();

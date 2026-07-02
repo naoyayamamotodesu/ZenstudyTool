@@ -5,6 +5,7 @@
     showDailyTarget: "showDailyTarget",
     autoSkipEnabled: "autoSkipEnabled",
     alwaysFocusEnabled: "alwaysFocusEnabled",
+    videoEndAlertEnabled: "videoEndAlertEnabled",
     copyTextEnabled: "copyTextEnabled",
     downloadEnabled: "downloadEnabled",
     slideDownloadEnabled: "slideDownloadEnabled",

@@ -44,6 +44,7 @@
         "content/ui.js",
         "content/auto-skip.js",
         "content/always-focus.js",
+        "content/video-end-alert.js",
         "content/copy-text.js",
         "content/answer-assist.js",
         "content/proofreader.js",
