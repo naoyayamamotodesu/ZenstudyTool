@@ -54,6 +54,8 @@ class ZenstudyToolVideoEndAlert {
   bindVideo(video) {
     if (!video || this.boundVideos.has(video)) return;
     this.boundVideos.add(video);
+    video.addEventListener("play", this.unlockAudio, { once: true });
+    video.addEventListener("playing", this.unlockAudio, { once: true });
     video.addEventListener("ended", () => this.handleVideoEnded(video));
   }
 
