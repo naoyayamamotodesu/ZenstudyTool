@@ -5,6 +5,7 @@
   "description": "ZEN Studyの学習体験を最適化するツール（必修フィルタ・時間表示・動画DL）。",
   "permissions": [
     "storage",
+    "tabs",
     "webRequest",
     "downloads",
     "offscreen"

@@ -68,6 +68,7 @@
   const MESSAGE_TYPES = Object.freeze({
     videoUrlDetected: "ZST_VIDEO_URL_DETECTED",
     getVideoUrl: "ZST_GET_VIDEO_URL",
+    focusVideoEndTab: "ZST_FOCUS_VIDEO_END_TAB",
     downloadVideo: "ZST_DOWNLOAD_VIDEO",
     downloadSlideImages: "ZST_DOWNLOAD_SLIDE_IMAGES",
     proofreadText: "ZST_PROOFREAD_TEXT",

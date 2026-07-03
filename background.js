@@ -1470,6 +1470,16 @@ chrome.runtime.onMessage.addListener((message, sender, sendResponse) => {
     return false;
   }
 
+  if (message.type === MESSAGE_TYPES.focusVideoEndTab) {
+    focusSenderTab(sender)
+      .then(() => sendResponse({ success: true }))
+      .catch((error) => {
+        console.error('[ZenstudyTool BG] Focus tab error:', error);
+        sendResponse({ success: false, message: error.message || 'タブの前面表示に失敗しました' });
+      });
+    return true;
+  }
+
   if (message.type === MESSAGE_TYPES.downloadVideo) {
     // ダウンロードリクエスト
     handleDownload(message, sender.tab?.id).then(sendResponse);
@@ -1512,6 +1522,18 @@ chrome.runtime.onMessage.addListener((message, sender, sendResponse) => {
 
   return false;
 });
+
+async function focusSenderTab(sender) {
+  const tab = sender.tab;
+  if (!tab?.id) {
+    throw new Error('送信元タブが見つかりません');
+  }
+
+  if (tab.windowId !== undefined) {
+    await chrome.windows.update(tab.windowId, { focused: true });
+  }
+  await chrome.tabs.update(tab.id, { active: true });
+}
 
 // タブが閉じられたらクリーンアップ
 chrome.tabs.onRemoved.addListener((tabId) => {

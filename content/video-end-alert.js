@@ -73,10 +73,17 @@ class ZenstudyToolVideoEndAlert {
       : "動画が終了しました";
 
     this.showToast(message);
+    this.focusCurrentTab();
     this.playAlertSound();
     window.setTimeout(() => {
       if (this.enabled) window.alert(message);
     }, 1900);
+  }
+
+  focusCurrentTab() {
+    safeRuntimeSendMessage({
+      type: MESSAGE_TYPES.focusVideoEndTab,
+    });
   }
 
   addAudioUnlockListeners() {
