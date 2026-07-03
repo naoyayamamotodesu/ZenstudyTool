@@ -341,12 +341,13 @@ const getAccessibleIframeDocument = (iframe) => {
   }
 };
 
-const normalizeButtonLabel = (element) => String(
-  element?.textContent
-  || element?.value
-  || element?.getAttribute?.("aria-label")
-  || ""
-).replace(/\s+/g, " ").trim();
+const normalizeButtonLabel = (element) => [
+  element?.textContent,
+  element?.value,
+  element?.getAttribute?.("aria-label"),
+  element?.getAttribute?.("title"),
+].map((value) => String(value || "").replace(/\s+/g, " ").trim())
+  .find(Boolean) || "";
 
 const findActionButtonWrapper = (doc) => {
   const explicitWrapper = doc?.querySelector?.(".evaluate-button");
@@ -449,4 +450,3 @@ const safeRuntimeSendMessage = (message, callback = () => {}) => {
     throw error;
   }
 };
-

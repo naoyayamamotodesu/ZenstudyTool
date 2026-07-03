@@ -110,10 +110,16 @@ class ZenstudyToolAutoSkip {
    * 選択肢の自動回答はしない。
    */
   checkExerciseResultAction() {
-    if (!this.enabled || this.isSkipping || isBatchDownloadActive()) return;
+    if (!this.enabled || isBatchDownloadActive()) return;
     if (!this.isExercisePage()) return;
 
-    const retryButton = this.findActionButtonByLabels(["再受講する", "再受講", "もう一度"]);
+    const retryButton = this.findActionButtonByLabels([
+      "再受講する",
+      "再受講",
+      "もう一度",
+      "もう一度解く",
+      "やり直す",
+    ]);
     if (retryButton && this.hasIncorrectResult()) {
       this.scheduleQuickClick(retryButton, `retry:${location.href}`);
       return;
@@ -126,6 +132,9 @@ class ZenstudyToolAutoSkip {
         "次の動画へ",
         "次の動画",
         "次に進む",
+        "次へ進む",
+        "次のレッスンへ",
+        "次の章へ",
       ]);
 
       if (nextButton) {
@@ -145,30 +154,46 @@ class ZenstudyToolAutoSkip {
   }
 
   isExercisePage() {
-    return /\/exercise\//.test(location.pathname);
+    if (/\/exercise\//.test(location.pathname)) return true;
+
+    const text = this.getVisibleResultText();
+    if (/確認テスト|答え合わせ|再受講/.test(text)) return true;
+    return Boolean(this.findActionButtonByLabels(["答え合わせ", "再受講"]));
   }
 
   findActionButtonByLabels(labels) {
-    const labelSet = new Set(labels);
-    return Array.from(
-      document.querySelectorAll('button, a[role="button"], input[type="button"], input[type="submit"]')
-    ).find((element) => labelSet.has(normalizeButtonLabel(element)) && !element.disabled);
+    return this.getCandidateDocuments()
+      .flatMap((doc) => Array.from(
+        doc.querySelectorAll('button, [role="button"], input[type="button"], input[type="submit"]')
+      ))
+      .find((element) => {
+        const label = normalizeButtonLabel(element);
+        if (!label || !labels.some((expected) => label.includes(expected))) return false;
+        if (element.disabled || element.getAttribute("aria-disabled") === "true") return false;
+        return this.isElementVisible(element);
+      });
   }
 
   hasIncorrectResult() {
     const text = this.getVisibleResultText();
-    return /不正解|不合格|間違|残念|再受講/.test(text);
+    return /不正解|不合格|間違|残念|再受講|もう一度|やり直/.test(text);
   }
 
   hasCorrectResult() {
     const text = this.getVisibleResultText();
     if (this.hasIncorrectResult()) return false;
-    return /正解|合格|完了|クリア|○|〇/.test(text);
+    return /正解|合格|完了|クリア|おめでとう|全問正解|満点/.test(text);
   }
 
   getVisibleResultText() {
-    const main = document.querySelector('main, [role="main"], .exercise, section') || document.body;
-    return (main?.textContent || "").replace(/\s+/g, " ").trim();
+    return this.getCandidateDocuments()
+      .map((doc) => {
+        const main = doc.querySelector('main, [role="main"], .exercise, section') || doc.body;
+        return main?.textContent || "";
+      })
+      .join(" ")
+      .replace(/\s+/g, " ")
+      .trim();
   }
 
   scheduleQuickClick(target, key) {
@@ -181,6 +206,24 @@ class ZenstudyToolAutoSkip {
       if (!this.enabled || isBatchDownloadActive()) return;
       target.click();
     }, 100);
+  }
+
+  getCandidateDocuments() {
+    const docs = [document];
+    for (const iframe of document.querySelectorAll("iframe")) {
+      const iframeDoc = getAccessibleIframeDocument(iframe);
+      if (iframeDoc && !docs.includes(iframeDoc)) docs.push(iframeDoc);
+    }
+    return docs;
+  }
+
+  isElementVisible(element) {
+    const rect = element.getBoundingClientRect();
+    const style = element.ownerDocument.defaultView.getComputedStyle(element);
+    return rect.width > 0
+      && rect.height > 0
+      && style.visibility !== "hidden"
+      && style.display !== "none";
   }
 
   findNextIncompleteItem() {
