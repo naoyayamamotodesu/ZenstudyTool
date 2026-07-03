@@ -4,6 +4,8 @@ class ZenstudyToolAutoSkip {
     this.observer = null;
     this.isSkipping = false;
     this.skipTimerId = null;
+    this.quickActionTimerId = null;
+    this.lastQuickActionKey = "";
     /** 直前にクリックした教材名（連打防止） */
     this.lastClickedName = "";
 
@@ -30,8 +32,12 @@ class ZenstudyToolAutoSkip {
     if (this.observer) return;
     this.lastClickedName = "";
     // DOM変更と属性変更（SVGのcolor変化）を監視
-    this.observer = createDebouncedObserver(() => this.checkAndSkip(), 500, true);
+    this.observer = createDebouncedObserver(() => {
+      this.checkExerciseResultAction();
+      this.checkAndSkip();
+    }, 100, true);
     // 初回チェック
+    this.checkExerciseResultAction();
     this.checkAndSkip();
   }
 
@@ -44,8 +50,13 @@ class ZenstudyToolAutoSkip {
       clearTimeout(this.skipTimerId);
       this.skipTimerId = null;
     }
+    if (this.quickActionTimerId) {
+      clearTimeout(this.quickActionTimerId);
+      this.quickActionTimerId = null;
+    }
     this.isSkipping = false;
     this.lastClickedName = "";
+    this.lastQuickActionKey = "";
   }
 
   /**
@@ -92,6 +103,91 @@ class ZenstudyToolAutoSkip {
       }
     }
     // 全部緑 → 何もしない
+  }
+
+  /**
+   * 確認テストの結果表示後だけ、次の操作を素早く実行する。
+   * 選択肢の自動回答はしない。
+   */
+  checkExerciseResultAction() {
+    if (!this.enabled || this.isSkipping || isBatchDownloadActive()) return;
+    if (!this.isExercisePage()) return;
+
+    const retryButton = this.findActionButtonByLabels(["再受講する", "再受講", "もう一度"]);
+    if (retryButton && this.hasIncorrectResult()) {
+      this.scheduleQuickClick(retryButton, `retry:${location.href}`);
+      return;
+    }
+
+    if (this.hasCorrectResult()) {
+      const nextButton = this.findActionButtonByLabels([
+        "次へ",
+        "次の教材へ",
+        "次の動画へ",
+        "次の動画",
+        "次に進む",
+      ]);
+
+      if (nextButton) {
+        this.scheduleQuickClick(nextButton, `next-button:${location.href}`);
+        return;
+      }
+
+      const nextItem = this.findNextIncompleteItem();
+      if (!nextItem) return;
+
+      const nextItemName = this.getItemName(nextItem);
+      if (!nextItemName || nextItemName !== this.lastClickedName) {
+        const clickTarget = nextItem.querySelector("div") || nextItem;
+        this.scheduleQuickClick(clickTarget, `next-item:${nextItemName}`);
+      }
+    }
+  }
+
+  isExercisePage() {
+    return /\/exercise\//.test(location.pathname);
+  }
+
+  findActionButtonByLabels(labels) {
+    const labelSet = new Set(labels);
+    return Array.from(
+      document.querySelectorAll('button, a[role="button"], input[type="button"], input[type="submit"]')
+    ).find((element) => labelSet.has(normalizeButtonLabel(element)) && !element.disabled);
+  }
+
+  hasIncorrectResult() {
+    const text = this.getVisibleResultText();
+    return /不正解|不合格|間違|残念|再受講/.test(text);
+  }
+
+  hasCorrectResult() {
+    const text = this.getVisibleResultText();
+    if (this.hasIncorrectResult()) return false;
+    return /正解|合格|完了|クリア|○|〇/.test(text);
+  }
+
+  getVisibleResultText() {
+    const main = document.querySelector('main, [role="main"], .exercise, section') || document.body;
+    return (main?.textContent || "").replace(/\s+/g, " ").trim();
+  }
+
+  scheduleQuickClick(target, key) {
+    if (!target || key === this.lastQuickActionKey) return;
+    this.lastQuickActionKey = key;
+
+    if (this.quickActionTimerId) clearTimeout(this.quickActionTimerId);
+    this.quickActionTimerId = setTimeout(() => {
+      this.quickActionTimerId = null;
+      if (!this.enabled || isBatchDownloadActive()) return;
+      target.click();
+    }, 100);
+  }
+
+  findNextIncompleteItem() {
+    const items = Array.from(
+      document.querySelectorAll('ul[aria-label$="リスト"] > li')
+    );
+    return items.find((item) => !this.isReportItem(item) && !this.isGreen(item));
   }
 
   /**
