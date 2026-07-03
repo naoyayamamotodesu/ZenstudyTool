@@ -60,8 +60,11 @@ class ZenstudyToolAutoSkip {
     );
     if (items.length === 0) return;
 
-    // 上から順に、最初の緑じゃない行を探す
+    // 上から順に、最初の緑じゃない対象教材を探す。
+    // レポートは自動操作しない。
     for (const item of items) {
+      if (this.isReportItem(item)) continue;
+
       if (!this.isGreen(item)) {
         // この行が緑じゃない = まだ未完了 → ここをクリックすべき先
         const name = this.getItemName(item);
@@ -108,5 +111,21 @@ class ZenstudyToolAutoSkip {
   getItemName(item) {
     const span = item.querySelector('span[font-size="1.5rem"]');
     return span ? span.textContent.trim() : "";
+  }
+
+  /**
+   * レポート行かどうかを判定する。
+   * 自動スキップではレポートを開いたり提出画面を操作したりしない。
+   * @param {HTMLElement} item - <li>要素
+   * @returns {boolean}
+   */
+  isReportItem(item) {
+    const text = item.textContent || "";
+    if (/レポート|report/i.test(text)) return true;
+
+    const reportLink = item.querySelector(
+      'a[href*="/reports/"], a[href*="/report/"], a[href*="/evaluation_reports/"], a[href*="/evaluation_report/"], a[href*="/essay_reports/"], a[href*="/essay_report/"], a[aria-label*="レポート"]'
+    );
+    return Boolean(reportLink);
   }
 }

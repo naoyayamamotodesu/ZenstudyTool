@@ -41,6 +41,7 @@ class ZenstudyToolVideoEndAlert {
     }
     this.removeAudioUnlockListeners();
     this.removeToast();
+    this.removeNoticeDialog();
   }
 
   scanVideos() {
@@ -73,9 +74,7 @@ class ZenstudyToolVideoEndAlert {
     this.showToast(message);
     this.focusCurrentTab();
     this.playAlertSound();
-    window.setTimeout(() => {
-      if (this.enabled) window.alert(message);
-    }, 1900);
+    this.showNoticeDialog(message);
   }
 
   focusCurrentTab() {
@@ -201,5 +200,50 @@ class ZenstudyToolVideoEndAlert {
     this.toastTimerId = null;
     const toast = document.getElementById("__ZENSTUDYTOOL_video_end_alert_toast");
     if (toast) toast.remove();
+  }
+
+  showNoticeDialog(message) {
+    this.removeNoticeDialog();
+
+    const overlay = document.createElement("div");
+    overlay.id = "__ZENSTUDYTOOL_video_end_alert_dialog";
+    overlay.className = "__ZENSTUDYTOOL_videoEndAlertDialogOverlay";
+    overlay.setAttribute("role", "dialog");
+    overlay.setAttribute("aria-modal", "true");
+
+    const panel = document.createElement("div");
+    panel.className = "__ZENSTUDYTOOL_videoEndAlertDialog";
+
+    const title = document.createElement("div");
+    title.className = "__ZENSTUDYTOOL_videoEndAlertDialogTitle";
+    title.textContent = "動画が終了しました";
+
+    const body = document.createElement("div");
+    body.className = "__ZENSTUDYTOOL_videoEndAlertDialogBody";
+    body.textContent = message;
+
+    const detail = document.createElement("div");
+    detail.className = "__ZENSTUDYTOOL_videoEndAlertDialogDetail";
+    detail.textContent = "この動画タブを前面に戻しました。次の操作に進む前に、必要なら教材の完了状態を確認してください。";
+
+    const button = document.createElement("button");
+    button.type = "button";
+    button.className = "__ZENSTUDYTOOL_videoEndAlertDialogButton";
+    button.textContent = "確認しました";
+    button.addEventListener("click", () => this.removeNoticeDialog());
+
+    overlay.addEventListener("click", (event) => {
+      if (event.target === overlay) this.removeNoticeDialog();
+    });
+
+    panel.append(title, body, detail, button);
+    overlay.appendChild(panel);
+    document.body.appendChild(overlay);
+    button.focus();
+  }
+
+  removeNoticeDialog() {
+    const dialog = document.getElementById("__ZENSTUDYTOOL_video_end_alert_dialog");
+    if (dialog) dialog.remove();
   }
 }
